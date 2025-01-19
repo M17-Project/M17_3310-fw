@@ -25,8 +25,8 @@
 #include <string.h>
 
 #include "fonts.h"
-#include "dict_en.h"
-#include "t9.h"
+#include "../t9/dict_en.h"
+#include "../t9/t9.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/

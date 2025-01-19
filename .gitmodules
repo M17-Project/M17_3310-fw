@@ -1,0 +1,5 @@
+[submodule "M17_T9"]
+	path = Core/t9
+	url = https://github.com/M17-Project/M17_T9
+	branch = dev
+	
