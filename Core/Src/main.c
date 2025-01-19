@@ -27,6 +27,7 @@
 #include "fonts.h"
 #include "../t9/dict_en.h"
 #include "../t9/t9.h"
+#include <m17.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
