@@ -226,12 +226,12 @@ void dispInit(void)
 	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1); //RES high
 	HAL_Delay(10);
 
-	dispWrite(0, 0x21);	//extended commands
-	dispWrite(0, 0xC8);	//contrast
-	dispWrite(0, 0x06);	//temp coeff
-	dispWrite(0, 0x13);	//LCD bias 1:48
-	dispWrite(0, 0x20);	//standard commands
-	dispWrite(0, 0x0C);	//normal mode
+	dispWrite(0, 0x21);			//extended commands
+	dispWrite(0, 0x80|0x48);	//contrast (0x00 to 0x7F)
+	dispWrite(0, 0x06);			//temp coeff.
+	dispWrite(0, 0x13);			//LCD bias 1:48
+	dispWrite(0, 0x20);			//standard commands
+	dispWrite(0, 0x0C);			//normal mode
 }
 
 void dispGotoXY(uint8_t x, uint8_t y)
