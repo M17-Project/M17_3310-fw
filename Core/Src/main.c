@@ -113,6 +113,31 @@ typedef enum
 volatile char code[15]="";
 char message[128]="";
 volatile uint8_t pos=0;
+
+//settings (volatile!)
+typedef struct
+{
+	char callsign[12];
+	char welcome_msg[2][24];
+
+	uint8_t backlight;
+
+	char ch_name[24];
+	uint32_t rx_frequency;
+	uint32_t tx_frequency;
+} dev_settings_t;
+
+dev_settings_t dev_settings =
+{
+	"SP5WWP",
+	{"Welcome", "message"},
+
+	200,
+
+	"SR5MS",
+	431212500,
+	438812500
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -139,8 +164,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	//text entry timer
 	if(htim->Instance==TIM7)
 	{
-		pos=strlen(message);
-		memset((char*)code, 0, strlen((char*)code));
+		//pos=strlen(message);
+		//memset((char*)code, 0, strlen((char*)code));
 		HAL_TIM_Base_Stop(&htim7);
 		TIM7->CNT=0;
 	}
@@ -166,6 +191,17 @@ void actVibr(uint8_t period)
 	VIBR_GPIO_Port->BSRR = (uint32_t)VIBR_Pin;
 	HAL_Delay(period);
 	VIBR_GPIO_Port->BSRR = ((uint32_t)VIBR_Pin<<16);
+}
+
+void playBeep(uint16_t duration) //blocking
+{
+	//1kHz (84MHz master clock)
+	TIM1->ARR = 10-1;
+	TIM1->PSC = 8400-1;
+
+	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
+	HAL_Delay(duration);
+	HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
 }
 
 //display
@@ -335,13 +371,24 @@ void drawRect(uint8_t buff[DISP_BUFF_SIZ], uint8_t x0, uint8_t y0, uint8_t x1, u
 
 void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
 {
+	char str[24];
+
 	disp_state = DISP_MAIN_SCR;
 	dispClear(buff, 0);
 
-	setString(buff, 0, 0*9, &nokia_small, "M17", 0, ALIGN_LEFT);
+	setString(buff, 0, 0, &nokia_small, "M17", 0, ALIGN_LEFT);
 
-	setString(buff, 0, 15, &nokia_big, "SR5MS", 0, ALIGN_CENTER);
-	setString(buff, 0, 30, &nokia_small, "438.8125", 0, ALIGN_CENTER);
+	setString(buff, 0, 9, &nokia_big, dev_settings.ch_name, 0, ALIGN_CENTER);
+
+	sprintf(str, "%ld.%04ld",
+			dev_settings.rx_frequency/1000000,
+			dev_settings.rx_frequency - (dev_settings.rx_frequency/1000000)*1000000);
+	setString(buff, 0, 24, &nokia_small, str, 0, ALIGN_CENTER);
+
+	sprintf(str, "%ld.%04ld",
+			dev_settings.tx_frequency/1000000,
+			dev_settings.tx_frequency - (dev_settings.tx_frequency/1000000)*1000000);
+	setString(buff, 0, 32, &nokia_small, str, 0, ALIGN_CENTER);
 
 	;
 }
@@ -355,10 +402,10 @@ void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *cal
 	setString(buff, 0, 41, &nokia_small, callsign, 0, ALIGN_CENTER);
 
 	//fade in
-	for(uint8_t i=0; i<250; i++)
+	for(uint8_t i=0; i<dev_settings.backlight; i++)
 	{
 		setBacklight(i);
-		HAL_Delay(8);
+		HAL_Delay(5);
 	}
 }
 
@@ -446,7 +493,7 @@ key_t scanKeys(void)
 	return key;
 }
 
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_t text_mode, key_t key)
+void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_t *text_mode, key_t key)
 {
 	switch(key)
 	{
@@ -488,20 +535,31 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_1:
-			char *last = &message[pos];
+			HAL_TIM_Base_Stop(&htim7);
+			pos=strlen(message);
+			char *last = &message[pos>0 ? pos-1 : 0];
 
-			if(*last=='.')
-				*last=',';
-			else if(*last==',')
-				*last='\'';
-			else if(*last=='\'')
-				*last='!';
-			else if(*last=='!')
-				*last='?';
-			else if(*last=='?')
-				*last='.';
+			if(TIM7->CNT>0)
+			{
+				if(*last=='.')
+					*last=',';
+				else if(*last==',')
+					*last='\'';
+				else if(*last=='\'')
+					*last='!';
+				else if(*last=='!')
+					*last='?';
+				else if(*last=='?')
+					*last='1';
+				else if(*last=='1')
+					*last='.';
+				else
+					message[pos] = '.';
+			}
 			else
-				message[pos] = '.';
+			{
+				message[pos>0 ? pos : 0] = '.';
+			}
 
 			memset((char*)code, 0, strlen((char*)code));
 
@@ -513,7 +571,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_2:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '2');
 
@@ -529,35 +587,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
 				if(TIM7->CNT>0)
 				{
-					pos=strlen(message);
-					last = &message[pos];
+					switch(*last)
+					{
+						case('a'):
+							*last = 'b';
+						break;
+
+						case('b'):
+							*last = 'c';
+						break;
+
+						case('c'):
+							*last = '2';
+						break;
+
+						case('2'):
+							*last = 'a';
+						break;
+
+						default:
+							message[pos] = 'a';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('a'):
-						*last = 'b';
-					break;
-
-					case('b'):
-						*last = 'c';
-					break;
-
-					case('c'):
-						*last = '2';
-					break;
-
-					case('2'):
-						*last = 'a';
-					break;
-
-					default:
-						*last = 'a';
-					break;
+					message[pos>0 ? pos : 0] = 'a';
 				}
 
 				TIM7->CNT=0;
@@ -569,7 +629,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_3:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '3');
 
@@ -585,34 +645,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('d'):
+							*last = 'e';
+						break;
+
+						case('e'):
+							*last = 'f';
+						break;
+
+						case('f'):
+							*last = '3';
+						break;
+
+						case('3'):
+							*last = 'd';
+						break;
+
+						default:
+							message[pos] = 'd';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('d'):
-						*last = 'e';
-					break;
-
-					case('e'):
-						*last = 'f';
-					break;
-
-					case('f'):
-						*last = '3';
-					break;
-
-					case('3'):
-						*last = 'd';
-					break;
-
-					default:
-						*last = 'd';
-					break;
+					message[pos>0 ? pos : 0] = 'd';
 				}
 
 				TIM7->CNT=0;
@@ -624,7 +687,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_4:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '4');
 
@@ -640,34 +703,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('g'):
+							*last = 'h';
+						break;
+
+						case('h'):
+							*last = 'i';
+						break;
+
+						case('i'):
+							*last = '4';
+						break;
+
+						case('4'):
+							*last = 'g';
+						break;
+
+						default:
+							message[pos] = 'g';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('g'):
-						*last = 'h';
-					break;
-
-					case('h'):
-						*last = 'i';
-					break;
-
-					case('i'):
-						*last = '4';
-					break;
-
-					case('4'):
-						*last = 'g';
-					break;
-
-					default:
-						*last = 'g';
-					break;
+					message[pos>0 ? pos : 0] = 'g';
 				}
 
 				TIM7->CNT=0;
@@ -679,7 +745,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_5:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '5');
 
@@ -695,34 +761,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('j'):
+							*last = 'k';
+						break;
+
+						case('k'):
+							*last = 'l';
+						break;
+
+						case('l'):
+							*last = '5';
+						break;
+
+						case('5'):
+							*last = 'j';
+						break;
+
+						default:
+							message[pos] = 'j';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('j'):
-						*last = 'k';
-					break;
-
-					case('k'):
-						*last = 'l';
-					break;
-
-					case('l'):
-						*last = '5';
-					break;
-
-					case('5'):
-						*last = 'j';
-					break;
-
-					default:
-						*last = 'j';
-					break;
+					message[pos>0 ? pos : 0] = 'j';
 				}
 
 				TIM7->CNT=0;
@@ -734,7 +803,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_6:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '6');
 
@@ -750,34 +819,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('m'):
+							*last = 'n';
+						break;
+
+						case('n'):
+							*last = 'o';
+						break;
+
+						case('o'):
+							*last = '6';
+						break;
+
+						case('6'):
+							*last = 'm';
+						break;
+
+						default:
+							message[pos] = 'm';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('m'):
-						*last = 'n';
-					break;
-
-					case('n'):
-						*last = 'o';
-					break;
-
-					case('o'):
-						*last = '6';
-					break;
-
-					case('6'):
-						*last = 'm';
-					break;
-
-					default:
-						*last = 'm';
-					break;
+					message[pos>0 ? pos : 0] = 'm';
 				}
 
 				TIM7->CNT=0;
@@ -789,7 +861,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_7:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '7');
 
@@ -805,38 +877,41 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('p'):
+							*last = 'q';
+						break;
+
+						case('q'):
+							*last = 'r';
+						break;
+
+						case('r'):
+							*last = 's';
+						break;
+
+						case('s'):
+							*last = '7';
+						break;
+
+						case('7'):
+							*last = 'p';
+						break;
+
+						default:
+							message[pos] = 'p';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('p'):
-						*last = 'q';
-					break;
-
-					case('q'):
-						*last = 'r';
-					break;
-
-					case('r'):
-						*last = 's';
-					break;
-
-					case('s'):
-						*last = '7';
-					break;
-
-					case('7'):
-						*last = 'p';
-					break;
-
-					default:
-						*last = 'p';
-					break;
+					message[pos>0 ? pos : 0] = 'p';
 				}
 
 				TIM7->CNT=0;
@@ -848,7 +923,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_8:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '8');
 
@@ -864,34 +939,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('t'):
+							*last = 'u';
+						break;
+
+						case('u'):
+							*last = 'v';
+						break;
+
+						case('v'):
+							*last = '8';
+						break;
+
+						case('8'):
+							*last = 't';
+						break;
+
+						default:
+							message[pos] = 't';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('t'):
-						*last = 'u';
-					break;
-
-					case('u'):
-						*last = 'v';
-					break;
-
-					case('v'):
-						*last = '8';
-					break;
-
-					case('8'):
-						*last = 't';
-					break;
-
-					default:
-						*last = 't';
-					break;
+					message[pos>0 ? pos : 0] = 't';
 				}
 
 				TIM7->CNT=0;
@@ -903,7 +981,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_9:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '9');
 
@@ -919,38 +997,41 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('w'):
+							*last = 'x';
+						break;
+
+						case('x'):
+							*last = 'y';
+						break;
+
+						case('y'):
+							*last = 'z';
+						break;
+
+						case('z'):
+							*last = '9';
+						break;
+
+						case('9'):
+							*last = 'w';
+						break;
+
+						default:
+							message[pos] = 'w';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('w'):
-						*last = 'x';
-					break;
-
-					case('x'):
-						*last = 'y';
-					break;
-
-					case('y'):
-						*last = 'z';
-					break;
-
-					case('z'):
-						*last = '9';
-					break;
-
-					case('9'):
-						*last = 'w';
-					break;
-
-					default:
-						*last = 'w';
-					break;
+					message[pos>0 ? pos : 0] = 'w';
 				}
 
 				TIM7->CNT=0;
@@ -962,7 +1043,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_ASTERISK:
-			if(text_mode==TEXT_T9)
+			if(*text_mode==TEXT_T9)
 			{
 				char *w = addCode((char*)code, '*');
 
@@ -974,26 +1055,29 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 			else
 			{
 				HAL_TIM_Base_Stop(&htim7);
-				char *last = &message[pos];
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
 
-				if(TIM7->CNT>0 && TIM7->CNT<4999)
+				if(TIM7->CNT>0)
 				{
-					//pos++;
+					switch(*last)
+					{
+						case('*'):
+							*last = '+';
+						break;
+
+						case('+'):
+							*last = '*';
+						break;
+
+						default:
+							message[pos] = '*';
+						break;
+					}
 				}
-
-				switch(*last)
+				else
 				{
-					case('*'):
-						*last = '+';
-					break;
-
-					case('+'):
-						*last = '*';
-					break;
-
-					default:
-						*last = '*';
-					break;
+					message[pos>0 ? pos : 0] = '*';
 				}
 
 				TIM7->CNT=0;
@@ -1017,14 +1101,14 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		case KEY_HASH:
 			if(disp_state==DISP_TEXT_ENTRY)
 			{
-				if(text_mode==TEXT_T9)
-					text_mode = TEXT_NORM;
+				if(*text_mode==TEXT_T9)
+					*text_mode = TEXT_NORM;
 				else
-					text_mode = TEXT_T9;
+					*text_mode = TEXT_T9;
 
 				drawRect(buff, 0, 0, 15, 8, 1, 1);
 
-				if(text_mode==TEXT_T9)
+				if(*text_mode==TEXT_T9)
 					setString(buff, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
 				else
 					setString(buff, 0, 0, &nokia_small, (char*)"abc", 0, ALIGN_LEFT);
@@ -1083,15 +1167,16 @@ int main(void)
   dispClear(disp_buff, 0);
   setBacklight(0);
 
-  dispSplash(disp_buff, "Welcome", "message", "SP5WWP");
-
+  dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
+  //playBeep(100);
   HAL_Delay(1000);
+
   showMainScreen(disp_buff);
-
   HAL_Delay(1000);
+
   showMenu(disp_buff, &disp_state, "Main menu");
-
   HAL_Delay(1000);
+
   showTextEntry(disp_buff, &disp_state, text_mode);
   /* USER CODE END 2 */
 
@@ -1099,7 +1184,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  handleKey(disp_buff, disp_state, text_mode, scanKeys());
+	  handleKey(disp_buff, disp_state, &text_mode, scanKeys());
 	  HAL_Delay(100);
     /* USER CODE END WHILE */
 
@@ -1359,6 +1444,7 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 0 */
 
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
   TIM_OC_InitTypeDef sConfigOC = {0};
   TIM_BreakDeadTimeConfigTypeDef sBreakDeadTimeConfig = {0};
@@ -1367,12 +1453,21 @@ static void MX_TIM1_Init(void)
 
   /* USER CODE END TIM1_Init 1 */
   htim1.Instance = TIM1;
-  htim1.Init.Prescaler = 0;
+  htim1.Init.Prescaler = 8400-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65535;
+  htim1.Init.Period = 10-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
-  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim1, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   if (HAL_TIM_PWM_Init(&htim1) != HAL_OK)
   {
     Error_Handler();
@@ -1384,9 +1479,9 @@ static void MX_TIM1_Init(void)
     Error_Handler();
   }
   sConfigOC.OCMode = TIM_OCMODE_PWM1;
-  sConfigOC.Pulse = 0;
+  sConfigOC.Pulse = 4;
   sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
-  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_HIGH;
+  sConfigOC.OCNPolarity = TIM_OCNPOLARITY_LOW;
   sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
   sConfigOC.OCIdleState = TIM_OCIDLESTATE_RESET;
   sConfigOC.OCNIdleState = TIM_OCNIDLESTATE_RESET;
