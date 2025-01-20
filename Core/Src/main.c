@@ -18,11 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "usb_device.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+
+#include "usbd_cdc_if.h"
 
 #include "fonts.h"
 #include "../t9/dict_en.h"
@@ -63,8 +66,6 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart4;
-
-PCD_HandleTypeDef hpcd_USB_OTG_FS;
 
 /* USER CODE BEGIN PV */
 uint8_t disp_buff[DISP_BUFF_SIZ];
@@ -150,7 +151,6 @@ static void MX_TIM1_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_UART4_Init(void);
 static void MX_SPI1_Init(void);
-static void MX_USB_OTG_FS_PCD_Init(void);
 static void MX_TIM7_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -164,8 +164,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	//text entry timer
 	if(htim->Instance==TIM7)
 	{
-		//pos=strlen(message);
-		//memset((char*)code, 0, strlen((char*)code));
 		HAL_TIM_Base_Stop(&htim7);
 		TIM7->CNT=0;
 	}
@@ -1120,6 +1118,35 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 	}
 }
+
+//RF module
+void setRegRF(uint8_t reg, uint16_t val)
+{
+	char data[64];
+
+	sprintf(data, "AT+POKE=%d,%d\r\n", reg, val);
+	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 10);
+}
+
+void initRF(void)
+{
+	uint8_t data[64];
+
+	//turn on the module
+	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 1);
+	HAL_Delay(50);
+
+	memset(data, 0, 64);
+	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 10);
+	HAL_UART_Receive(&huart4, data, 64, 200); //naive, blocking
+
+	//display the received data
+	uint8_t len=strlen((char*)data);
+	if(len)
+		CDC_Transmit_FS(data, len);
+	else
+		CDC_Transmit_FS((uint8_t*)"Nothing received\n", 17);
+}
 /* USER CODE END 0 */
 
 /**
@@ -1158,8 +1185,8 @@ int main(void)
   MX_TIM2_Init();
   MX_UART4_Init();
   MX_SPI1_Init();
-  MX_USB_OTG_FS_PCD_Init();
   MX_TIM7_Init();
+  MX_USB_DEVICE_Init();
   /* USER CODE BEGIN 2 */
   HAL_Delay(1000);
 
@@ -1176,6 +1203,7 @@ int main(void)
 
   showMenu(disp_buff, &disp_state, "Main menu");
   HAL_Delay(1000);
+  initRF();
 
   showTextEntry(disp_buff, &disp_state, text_mode);
   /* USER CODE END 2 */
@@ -1624,7 +1652,7 @@ static void MX_UART4_Init(void)
 
   /* USER CODE END UART4_Init 1 */
   huart4.Instance = UART4;
-  huart4.Init.BaudRate = 115200;
+  huart4.Init.BaudRate = 9600;
   huart4.Init.WordLength = UART_WORDLENGTH_8B;
   huart4.Init.StopBits = UART_STOPBITS_1;
   huart4.Init.Parity = UART_PARITY_NONE;
@@ -1638,41 +1666,6 @@ static void MX_UART4_Init(void)
   /* USER CODE BEGIN UART4_Init 2 */
 
   /* USER CODE END UART4_Init 2 */
-
-}
-
-/**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_PCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hpcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hpcd_USB_OTG_FS.Init.dev_endpoints = 4;
-  hpcd_USB_OTG_FS.Init.speed = PCD_SPEED_FULL;
-  hpcd_USB_OTG_FS.Init.dma_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
-  hpcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.vbus_sensing_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
-  if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
 
 }
 
@@ -1695,7 +1688,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, RF_PWR_Pin|RF_PTT_Pin|COL_3_Pin|COL_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, RF_PWR_Pin|COL_3_Pin|COL_2_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(VIBR_GPIO_Port, VIBR_Pin, GPIO_PIN_RESET);
