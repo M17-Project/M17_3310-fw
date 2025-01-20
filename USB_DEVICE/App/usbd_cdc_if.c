@@ -263,6 +263,15 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   /* USER CODE BEGIN 6 */
   USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
   USBD_CDC_ReceivePacket(&hUsbDeviceFS);
+
+  extern uint8_t usb_rx[APP_RX_DATA_SIZE];
+  extern uint32_t usb_len;
+  extern uint8_t usb_drdy;
+
+  memcpy(usb_rx, Buf, *Len);
+  usb_len=*Len;
+  usb_drdy=1;
+
   return (USBD_OK);
   /* USER CODE END 6 */
 }

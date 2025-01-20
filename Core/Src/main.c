@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "usbd_cdc_if.h"
 
@@ -56,6 +57,7 @@
 ADC_HandleTypeDef hadc1;
 
 DAC_HandleTypeDef hdac;
+DMA_HandleTypeDef hdma_dac1;
 
 RTC_HandleTypeDef hrtc;
 
@@ -63,14 +65,17 @@ SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 
 UART_HandleTypeDef huart4;
 
 /* USER CODE BEGIN PV */
+//display
 uint8_t disp_buff[DISP_BUFF_SIZ];
 
-typedef enum
+//some typedefs
+typedef enum text_entry
 {
 	TEXT_T9,
     TEXT_NORM
@@ -78,7 +83,7 @@ typedef enum
 
 text_entry_t text_mode = TEXT_NORM;
 
-typedef enum
+typedef enum disp_state
 {
 	DISP_NONE,
 	DISP_SPLASH,
@@ -89,7 +94,7 @@ typedef enum
 
 disp_state_t disp_state = DISP_NONE;
 
-typedef enum
+typedef enum key
 {
 	KEY_NONE,
 	KEY_OK,
@@ -115,8 +120,13 @@ volatile char code[15]="";
 char message[128]="";
 volatile uint8_t pos=0;
 
+//usb-related
+uint8_t usb_rx[APP_RX_DATA_SIZE];
+uint32_t usb_len;
+uint8_t usb_drdy;
+
 //settings (volatile!)
-typedef struct
+typedef struct dev_settings
 {
 	char callsign[12];
 	char welcome_msg[2][24];
@@ -131,19 +141,20 @@ typedef struct
 dev_settings_t dev_settings =
 {
 	"SP5WWP",
-	{"Welcome", "message"},
+	{"OpenRTX", "rulez"},
 
 	200,
 
-	"SR5MS",
-	431212500,
-	438812500
+	"M17 IARU R1",
+	433475000,
+	433475000
 };
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_DAC_Init(void);
 static void MX_RTC_Init(void);
@@ -152,8 +163,9 @@ static void MX_TIM2_Init(void);
 static void MX_UART4_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM7_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-
+void setRF(uint8_t state);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -167,6 +179,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		HAL_TIM_Base_Stop(&htim7);
 		TIM7->CNT=0;
 	}
+}
+
+void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
+{
+	;//
 }
 
 //T9 related
@@ -397,7 +414,7 @@ void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *cal
 
 	setString(buff, 0, 9, &nokia_big, line1, 0, ALIGN_CENTER);
 	setString(buff, 0, 22, &nokia_big, line2, 0, ALIGN_CENTER);
-	setString(buff, 0, 41, &nokia_small, callsign, 0, ALIGN_CENTER);
+	setString(buff, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
 
 	//fade in
 	for(uint8_t i=0; i<dev_settings.backlight; i++)
@@ -496,12 +513,12 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 	switch(key)
 	{
 		case KEY_OK:
-			/*drawRect(buff, 0, 41, RES_X-1, RES_Y-1, 1, 1);
+			/*drawRect(buff, 0, 40, RES_X-1, RES_Y-1, 1, 1);
 			char line[16]="";
 			//sprintf(line, "pos=%d", pos);
 			//sprintf(line, "strlen=%d", strlen(message));
 			sprintf(line, "cnt=%lu", TIM7->CNT);
-			setString(buff, 0, 41, &nokia_small, line, 0, ALIGN_LEFT);*/
+			setString(buff, 0, 40, &nokia_small, line, 0, ALIGN_LEFT);*/
 		break;
 
 		case KEY_C:
@@ -1122,30 +1139,240 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 //RF module
 void setRegRF(uint8_t reg, uint16_t val)
 {
-	char data[64];
+	char data[64], rcv[64]={0};
+	uint8_t len;
 
-	sprintf(data, "AT+POKE=%d,%d\r\n", reg, val);
-	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 10);
+	len = sprintf(data, "AT+POKE=%d,%d\r\n", reg, val);
+	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
+
+	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 64, 10);
+
+	/*char msg[128];
+	sprintf(msg, "[RF module] POKE %02X %04X reply: %s\n", reg, val, rcv);
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+}
+
+uint16_t getRegRF(uint8_t reg)
+{
+	char data[64], rcv[64]={0};
+	uint8_t len;
+
+	len = sprintf(data, "AT+PEEK=%d\r\n", reg);
+	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
+	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 64, 10);
+
+	/*char msg[128];
+	sprintf(msg, "[RF module] PEEK %02X reply: %s\n", reg, rcv);
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+
+	return atoi(rcv);
+}
+
+void maskSetRegRF(uint8_t reg, uint16_t mask, uint16_t value)
+{
+	uint16_t regVal = getRegRF(reg);
+	regVal = (regVal & ~mask) | (value & mask);
+	setRegRF(reg, regVal);
+}
+
+void reloadRF(void)
+{
+	uint16_t funcMode = getRegRF(0x30) & 0x0060; //Get current op. status
+	maskSetRegRF(0x30, 0x0060, 0x0000); //RX and TX off
+	maskSetRegRF(0x30, 0x0060, funcMode); //Restore op. status
+}
+
+void setFreqRF(uint32_t freq)
+{
+	uint32_t val = (freq / 1000.0f) * 16.0f;
+	uint16_t fHi = (val >> 16) & 0xFFFF;
+	uint16_t fLo = val & 0xFFFF;
+
+	setRegRF(0x29, fHi);
+	setRegRF(0x2A, fLo);
+
+	reloadRF();
+}
+
+void setRF(uint8_t state)
+{
+	//0 for rx, 1 for tx
+	maskSetRegRF(0x30, 0x0060, (state+1)<<5);
 }
 
 void initRF(void)
 {
-	uint8_t data[64];
+	char msg[128]; //debug
+	uint8_t data[64]={0};
+
+	//set baseband DAC to idle
+	uint16_t val = 2048;
+	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&val, 1, DAC_ALIGN_12B_R);
+	HAL_TIM_Base_Start(&htim6);
+
+	//PTT off
+	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
+
+	//low RF power
+	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
 
 	//turn on the module
 	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 1);
-	HAL_Delay(50);
+	HAL_Delay(100);
 
-	memset(data, 0, 64);
-	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 10);
-	HAL_UART_Receive(&huart4, data, 64, 200); //naive, blocking
+	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 20);
+	HAL_UART_Receive(&huart4, data, 64, 50); //naive, blocking
 
 	//display the received data
 	uint8_t len=strlen((char*)data);
 	if(len)
-		CDC_Transmit_FS(data, len);
+	{
+		data[strlen((char*)data)-2]=0;
+		sprintf(msg, "[RF module] Version: %s\n", data);
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	}
 	else
-		CDC_Transmit_FS((uint8_t*)"Nothing received\n", 17);
+		CDC_Transmit_FS((uint8_t*)"[RF module] Nothing received\n", 30);
+
+	//SA868S (AT1846S) init sequence (thx, edgetriggered)
+	sprintf(msg, "[RF module] Init sequence start\n");
+	while(CDC_Transmit_FS((uint8_t*)msg, strlen(msg))==USBD_BUSY);
+
+	setRegRF(0x30, 0x0001);	//Soft reset
+	HAL_Delay(160);
+
+	setRegRF(0x30, 0x0004);	//Set pdn_reg (power down pin);
+
+	setRegRF(0x04, 0x0FD0);	//Set clk_mode to 25.6MHz/26MHz
+	setRegRF(0x0A, 0x7C20);	//Set 0x0A to its default value
+	setRegRF(0x13, 0xA100);
+	setRegRF(0x1F, 0x1001);	//Set gpio0 to ctcss_out/css_int/css_cmp
+							//and gpio6 to sq, sq&ctcss/cdcss when sq_out_set=1
+	setRegRF(0x31, 0x0031);
+	setRegRF(0x33, 0x44A5);
+	setRegRF(0x34, 0x2B89);
+	setRegRF(0x41, 0x4122);	//Set voice_gain_tx (voice digital gain); to 0x22
+	setRegRF(0x42, 0x1052);
+	setRegRF(0x43, 0x0100);
+	setRegRF(0x44, 0x07FF);	//Set gain_tx (voice digital gain after tx ADC downsample); to 0x7
+	setRegRF(0x59, 0x0B90);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
+							//and xmitter_dev (voice/subaudio TX FM deviation); to 0x2E
+	setRegRF(0x47, 0x7F2F);
+	setRegRF(0x4F, 0x2C62);
+	setRegRF(0x53, 0x0094);
+	setRegRF(0x54, 0x2A3C);
+	setRegRF(0x55, 0x0081);
+	setRegRF(0x56, 0x0B02);
+	setRegRF(0x57, 0x1C00);
+	setRegRF(0x58, 0x9CDD);	//Bit 0  = 1: CTCSS LPF bandwidth to 250Hz
+							//Bit 3  = 1: bypass CTCSS HPF
+							//Bit 4  = 1: bypass CTCSS LPF
+							//Bit 5  = 0: enable voice LPF
+							//Bit 6  = 1: bypass voice HPF
+							//Bit 7  = 1: bypass pre/de-emphasis
+							//Bit 11 = 1: bypass VOX HPF
+							//Bit 12 = 1: bypass VOX LPF
+							//Bit 13 = 0: normal RSSI LPF bandwidth
+	setRegRF(0x5A, 0x06DB);
+	setRegRF(0x63, 0x16AD);
+	setRegRF(0x67, 0x0628);	//Set DTMF C0 697Hz to ???
+	setRegRF(0x68, 0x05E5);	//Set DTMF C1 770Hz to 13MHz and 26MHz
+	setRegRF(0x69, 0x0555);	//Set DTMF C2 852Hz to ???
+	setRegRF(0x6A, 0x04B8);	//Set DTMF C3 941Hz to ???
+	setRegRF(0x6B, 0x02FE);	//Set DTMF C4 1209Hz to 13MHz and 26MHz
+	setRegRF(0x6C, 0x01DD);	//Set DTMF C5 1336Hz
+	setRegRF(0x6D, 0x00B1);	//Set DTMF C6 1477Hz
+	setRegRF(0x6E, 0x0F82);	//Set DTMF C7 1633Hz
+	setRegRF(0x6F, 0x017A);	//Set DTMF C0 2nd harmonic
+	setRegRF(0x70, 0x004C);	//Set DTMF C1 2nd harmonic
+	setRegRF(0x71, 0x0F1D);	//Set DTMF C2 2nd harmonic
+	setRegRF(0x72, 0x0D91);	//Set DTMF C3 2nd harmonic
+	setRegRF(0x73, 0x0A3E);	//Set DTMF C4 2nd harmonic
+	setRegRF(0x74, 0x090F);	//Set DTMF C5 2nd harmonic
+	setRegRF(0x75, 0x0833);	//Set DTMF C6 2nd harmonic
+	setRegRF(0x76, 0x0806);	//Set DTMF C7 2nd harmonic
+
+	setRegRF(0x30, 0x40A4);	//Set pdn_pin (power down enable);
+							//and set rx_on
+							//and set mute when rxno
+							//and set xtal_mode to 26MHz/13MHz
+	HAL_Delay(160);
+
+	setRegRF(0x30, 0x40A6);	//Start calibration
+	HAL_Delay(160);
+	setRegRF(0x30, 0x4006);	//Stop calibration
+	HAL_Delay(160);
+
+	setRegRF(0x40, 0x0031);
+
+	//set mode: 4FSK
+	setRegRF(0x3A, 0x00C2);
+	setRegRF(0x33, 0x45F5);
+	setRegRF(0x41, 0x4731);
+	setRegRF(0x42, 0x1036);
+	setRegRF(0x43, 0x00BB);
+	setRegRF(0x58, 0xBCFD);	//Bit 0  = 1: CTCSS LPF bandwidth to 250Hz
+							//Bit 3  = 1: bypass CTCSS HPF
+							//Bit 4  = 1: bypass CTCSS LPF
+							//Bit 5  = 1: bypass voice LPF
+							//Bit 6  = 1: bypass voice HPF
+							//Bit 7  = 1: bypass pre/de-emphasis
+							//Bit 11 = 1: bypass VOX HPF
+							//Bit 12 = 1: bypass VOX LPF
+							//Bit 13 = 1: bypass RSSI LPF
+	setRegRF(0x44, 0x06CC);
+	setRegRF(0x40, 0x0031);
+
+	reloadRF(); //reload
+
+	//set bandwidth: 12.5kHz
+	setRegRF(0x15, 0x1100);
+	setRegRF(0x32, 0x4495);
+	setRegRF(0x3A, 0x40C3);
+	setRegRF(0x3F, 0x29D1);
+	setRegRF(0x3C, 0x1B34);
+	setRegRF(0x48, 0x19B1);
+	setRegRF(0x60, 0x0F17);
+	setRegRF(0x62, 0x1425);
+	setRegRF(0x65, 0x2494);
+	setRegRF(0x66, 0xEB2E);
+	setRegRF(0x7F, 0x0001);
+	setRegRF(0x06, 0x0014);
+	setRegRF(0x07, 0x020C);
+	setRegRF(0x08, 0x0214);
+	setRegRF(0x09, 0x030C);
+	setRegRF(0x0A, 0x0314);
+	setRegRF(0x0B, 0x0324);
+	setRegRF(0x0C, 0x0344);
+	setRegRF(0x0D, 0x1344);
+	setRegRF(0x0E, 0x1B44);
+	setRegRF(0x0F, 0x3F44);
+	setRegRF(0x12, 0xE0EB);
+	setRegRF(0x7F, 0x0000);
+
+	maskSetRegRF(0x30, 0x3000, 0x0000);
+
+	reloadRF(); //reload
+
+	//no idea what this does
+	setRegRF(0x41, 0x0070);
+	setRegRF(0x44, 0x0022);
+
+	//set frequency
+	sprintf(msg, "[RF module] Setting frequency to %ldHz\n", dev_settings.tx_frequency);
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	setFreqRF(dev_settings.tx_frequency);
+
+	//test
+	sprintf(msg, "[RF module] Test start\n");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+	setRF(1);
+	HAL_Delay(5000);
+	setRF(0);
+
+	sprintf(msg, "[RF module] Test ended\n");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 }
 /* USER CODE END 0 */
 
@@ -1178,6 +1405,7 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+  MX_DMA_Init();
   MX_ADC1_Init();
   MX_DAC_Init();
   MX_RTC_Init();
@@ -1187,6 +1415,7 @@ int main(void)
   MX_SPI1_Init();
   MX_TIM7_Init();
   MX_USB_DEVICE_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
   HAL_Delay(1000);
 
@@ -1203,7 +1432,6 @@ int main(void)
 
   showMenu(disp_buff, &disp_state, "Main menu");
   HAL_Delay(1000);
-  initRF();
 
   showTextEntry(disp_buff, &disp_state, text_mode);
   /* USER CODE END 2 */
@@ -1214,6 +1442,21 @@ int main(void)
   {
 	  handleKey(disp_buff, disp_state, &text_mode, scanKeys());
 	  HAL_Delay(100);
+	  if(usb_drdy)
+	  {
+		  //drawRect(disp_buff, 0, 40, RES_X-1, RES_Y-1, 1, 1);
+		  //char line[24]="";
+		  //sprintf(line, "cnt=%d", 1337);
+		  //usb_rx[usb_len]=0; //null termination
+		  //setString(disp_buff, 0, 40, &nokia_small, (char*)usb_rx, 0, ALIGN_LEFT);
+		  if(usb_rx[0]=='a')
+			  setBacklight(usb_rx[1]);
+		  else if(usb_rx[0]=='b')
+			  playBeep(usb_rx[1]);
+		  else if(usb_rx[0]=='c')
+			  initRF();
+		  usb_drdy=0;
+	  }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -1347,7 +1590,7 @@ static void MX_DAC_Init(void)
 
   /** DAC channel OUT1 config
   */
-  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_Trigger = DAC_TRIGGER_T6_TRGO;
   sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_ENABLE;
   if (HAL_DAC_ConfigChannel(&hdac, &sConfig, DAC_CHANNEL_1) != HAL_OK)
   {
@@ -1595,6 +1838,44 @@ static void MX_TIM2_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 1-1;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 1750-1;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
   * @brief TIM7 Initialization Function
   * @param None
   * @retval None
@@ -1670,6 +1951,22 @@ static void MX_UART4_Init(void)
 }
 
 /**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -1688,10 +1985,10 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, RF_PWR_Pin|COL_3_Pin|COL_2_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, RF_PWR_Pin|RF_PTT_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, COL_3_Pin|COL_2_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(VIBR_GPIO_Port, VIBR_Pin, GPIO_PIN_RESET);
