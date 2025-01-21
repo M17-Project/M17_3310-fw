@@ -41,6 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
 #define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
@@ -127,6 +128,12 @@ typedef enum rf_mode
 	RF_MODE_4FSK
 } rf_mode_t;
 
+typedef enum rf_power
+{
+	RF_PWR_LOW,
+	RF_PWR_HIGH
+} rf_power_t;
+
 //T9 related variables
 volatile char code[15]="";
 char message[128]="";
@@ -145,7 +152,10 @@ typedef struct dev_settings
 
 	uint8_t backlight;
 
-	char mode_str[5];
+	rf_mode_t mode;
+	char str_mode[6];
+	ch_bw_t ch_bw;
+	rf_power_t rf_pwr;
 	char ch_name[24];
 	uint32_t rx_frequency;
 	uint32_t tx_frequency;
@@ -156,16 +166,30 @@ dev_settings_t dev_settings =
 	"N0KIA",
 	{"OpenRTX", "rulez"},
 
-	200,
+	255,
 
+	RF_MODE_4FSK,
 	"M17",
+	RF_BW_12K5,
+	RF_PWR_LOW,
 	"M17 IARU R1",
 	433475000,
 	433475000
 };
 
-//dac
-uint16_t wavetable[4800];
+//M17
+uint16_t frame_samples[2][SYM_PER_FRA*10]={{DAC_IDLE}, {0}}; //sps=10
+int8_t frame_symbols[SYM_PER_FRA];
+lsf_t lsf;
+
+//radio
+typedef enum radio_state
+{
+	RF_RX,
+	RF_TX
+} radio_state_t;
+
+radio_state_t radio_state = RF_RX;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -182,7 +206,7 @@ static void MX_SPI1_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
-void setRF(uint8_t state);
+void setRF(radio_state_t state);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -198,9 +222,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	}
 }
 
-void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
+void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 {
-	HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)wavetable, 4800, DAC_ALIGN_12B_R);
+	if(radio_state==RF_TX)
+	{
+		;
+	}
 }
 
 //T9 related
@@ -336,7 +363,7 @@ void setString(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *
 		break;
 
 		case ALIGN_CENTER:
-			xp=(RES_X-w)/2;
+			xp=(RES_X-w)/2+1;
 		break;
 
 		case ALIGN_RIGHT:
@@ -401,14 +428,14 @@ void drawRect(uint8_t buff[DISP_BUFF_SIZ], uint8_t x0, uint8_t y0, uint8_t x1, u
 	dispRefresh(buff);
 }
 
-void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
+void showMainScreen(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state)
 {
 	char str[24];
 
-	disp_state = DISP_MAIN_SCR;
+	*disp_state = DISP_MAIN_SCR;
 	dispClear(buff, 0);
 
-	setString(buff, 0, 0, &nokia_small, dev_settings.mode_str, 0, ALIGN_LEFT);
+	setString(buff, 0, 0, &nokia_small, dev_settings.str_mode, 0, ALIGN_LEFT);
 
 	setString(buff, 0, 12, &nokia_big, dev_settings.ch_name, 0, ALIGN_CENTER);
 
@@ -438,7 +465,7 @@ void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *cal
 	setString(buff, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
 
 	//fade in
-	for(uint8_t i=0; i<dev_settings.backlight; i++)
+	for(uint16_t i=0; i<dev_settings.backlight; i++)
 	{
 		setBacklight(i);
 		HAL_Delay(5);
@@ -529,25 +556,33 @@ key_t scanKeys(void)
 	return key;
 }
 
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_t *text_mode, key_t key)
+void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, key_t key)
 {
 	switch(key)
 	{
 		case KEY_OK:
-			/*drawRect(buff, 0, 40, RES_X-1, RES_Y-1, 1, 1);
-			char line[16]="";
-			//sprintf(line, "pos=%d", pos);
-			//sprintf(line, "strlen=%d", strlen(message));
-			sprintf(line, "cnt=%lu", TIM7->CNT);
-			setString(buff, 0, 40, &nokia_small, line, 0, ALIGN_LEFT);*/
+			if(*disp_state==DISP_MAIN_SCR)
+			{
+				radio_state = (radio_state==RF_RX)? RF_TX : RF_RX;
+				setRF(radio_state);
+			}
+			else
+			{
+				/*drawRect(buff, 0, 40, RES_X-1, RES_Y-1, 1, 1);
+				char line[16]="";
+				//sprintf(line, "pos=%d", pos);
+				//sprintf(line, "strlen=%d", strlen(message));
+				sprintf(line, "cnt=%lu", TIM7->CNT);
+				setString(buff, 0, 40, &nokia_small, line, 0, ALIGN_LEFT);*/
+			}
 		break;
 
 		case KEY_C:
-			if(disp_state==DISP_MENU)
+			if(*disp_state==DISP_MENU)
 			{
-				showMainScreen(buff);
+				showMainScreen(buff, disp_state);
 		    }
-			else if(disp_state==DISP_TEXT_ENTRY)
+			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
 				if(strlen(message)>0)
 				{
@@ -562,580 +597,619 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t disp_state, text_entry_
 		break;
 
 		case KEY_LEFT:
-			;
+			if(*disp_state==DISP_TEXT_ENTRY)
+			{
+				;
+			}
 		break;
 
 		case KEY_RIGHT:
-			pos=strlen(message);
-			memset((char*)code, 0, strlen((char*)code));
+			if(*disp_state==DISP_TEXT_ENTRY)
+			{
+				pos=strlen(message);
+				memset((char*)code, 0, strlen((char*)code));
+			}
 		break;
 
 		case KEY_1:
-			HAL_TIM_Base_Stop(&htim7);
-			pos=strlen(message);
-			char *last = &message[pos>0 ? pos-1 : 0];
-
-			if(TIM7->CNT>0)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				if(*last=='.')
-					*last=',';
-				else if(*last==',')
-					*last='\'';
-				else if(*last=='\'')
-					*last='!';
-				else if(*last=='!')
-					*last='?';
-				else if(*last=='?')
-					*last='1';
-				else if(*last=='1')
-					*last='.';
+				HAL_TIM_Base_Stop(&htim7);
+				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
+
+				if(TIM7->CNT>0)
+				{
+					if(*last=='.')
+						*last=',';
+					else if(*last==',')
+						*last='\'';
+					else if(*last=='\'')
+						*last='!';
+					else if(*last=='!')
+						*last='?';
+					else if(*last=='?')
+						*last='1';
+					else if(*last=='1')
+						*last='.';
+					else
+						message[pos] = '.';
+				}
 				else
-					message[pos] = '.';
+				{
+					message[pos>0 ? pos : 0] = '.';
+				}
+
+				memset((char*)code, 0, strlen((char*)code));
+
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+
+				TIM7->CNT=0;
+				HAL_TIM_Base_Start_IT(&htim7);
 			}
-			else
-			{
-				message[pos>0 ? pos : 0] = '.';
-			}
-
-			memset((char*)code, 0, strlen((char*)code));
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
-
-			TIM7->CNT=0;
-			HAL_TIM_Base_Start_IT(&htim7);
 		break;
 
 		case KEY_2:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '2');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '2');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('a'):
-							*last = 'b';
-						break;
-
-						case('b'):
-							*last = 'c';
-						break;
-
-						case('c'):
-							*last = '2';
-						break;
-
-						case('2'):
-							*last = 'a';
-						break;
-
-						default:
-							message[pos] = 'a';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'a';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('a'):
+								*last = 'b';
+							break;
+
+							case('b'):
+								*last = 'c';
+							break;
+
+							case('c'):
+								*last = '2';
+							break;
+
+							case('2'):
+								*last = 'a';
+							break;
+
+							default:
+								message[pos] = 'a';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'a';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_3:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '3');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '3');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('d'):
-							*last = 'e';
-						break;
-
-						case('e'):
-							*last = 'f';
-						break;
-
-						case('f'):
-							*last = '3';
-						break;
-
-						case('3'):
-							*last = 'd';
-						break;
-
-						default:
-							message[pos] = 'd';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'd';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('d'):
+								*last = 'e';
+							break;
+
+							case('e'):
+								*last = 'f';
+							break;
+
+							case('f'):
+								*last = '3';
+							break;
+
+							case('3'):
+								*last = 'd';
+							break;
+
+							default:
+								message[pos] = 'd';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'd';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_4:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '4');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '4');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('g'):
-							*last = 'h';
-						break;
-
-						case('h'):
-							*last = 'i';
-						break;
-
-						case('i'):
-							*last = '4';
-						break;
-
-						case('4'):
-							*last = 'g';
-						break;
-
-						default:
-							message[pos] = 'g';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'g';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('g'):
+								*last = 'h';
+							break;
+
+							case('h'):
+								*last = 'i';
+							break;
+
+							case('i'):
+								*last = '4';
+							break;
+
+							case('4'):
+								*last = 'g';
+							break;
+
+							default:
+								message[pos] = 'g';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'g';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_5:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '5');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '5');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('j'):
-							*last = 'k';
-						break;
-
-						case('k'):
-							*last = 'l';
-						break;
-
-						case('l'):
-							*last = '5';
-						break;
-
-						case('5'):
-							*last = 'j';
-						break;
-
-						default:
-							message[pos] = 'j';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'j';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('j'):
+								*last = 'k';
+							break;
+
+							case('k'):
+								*last = 'l';
+							break;
+
+							case('l'):
+								*last = '5';
+							break;
+
+							case('5'):
+								*last = 'j';
+							break;
+
+							default:
+								message[pos] = 'j';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'j';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
-		    }
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+			}
 		break;
 
 		case KEY_6:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '6');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '6');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('m'):
-							*last = 'n';
-						break;
-
-						case('n'):
-							*last = 'o';
-						break;
-
-						case('o'):
-							*last = '6';
-						break;
-
-						case('6'):
-							*last = 'm';
-						break;
-
-						default:
-							message[pos] = 'm';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'm';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('m'):
+								*last = 'n';
+							break;
+
+							case('n'):
+								*last = 'o';
+							break;
+
+							case('o'):
+								*last = '6';
+							break;
+
+							case('6'):
+								*last = 'm';
+							break;
+
+							default:
+								message[pos] = 'm';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'm';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_7:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '7');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '7');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('p'):
-							*last = 'q';
-						break;
-
-						case('q'):
-							*last = 'r';
-						break;
-
-						case('r'):
-							*last = 's';
-						break;
-
-						case('s'):
-							*last = '7';
-						break;
-
-						case('7'):
-							*last = 'p';
-						break;
-
-						default:
-							message[pos] = 'p';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'p';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('p'):
+								*last = 'q';
+							break;
+
+							case('q'):
+								*last = 'r';
+							break;
+
+							case('r'):
+								*last = 's';
+							break;
+
+							case('s'):
+								*last = '7';
+							break;
+
+							case('7'):
+								*last = 'p';
+							break;
+
+							default:
+								message[pos] = 'p';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'p';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_8:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '8');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '8');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('t'):
-							*last = 'u';
-						break;
-
-						case('u'):
-							*last = 'v';
-						break;
-
-						case('v'):
-							*last = '8';
-						break;
-
-						case('8'):
-							*last = 't';
-						break;
-
-						default:
-							message[pos] = 't';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 't';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('t'):
+								*last = 'u';
+							break;
+
+							case('u'):
+								*last = 'v';
+							break;
+
+							case('v'):
+								*last = '8';
+							break;
+
+							case('8'):
+								*last = 't';
+							break;
+
+							default:
+								message[pos] = 't';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 't';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_9:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '9');
+				if(*text_mode==TEXT_T9)
+				{
+					char *w = addCode((char*)code, '9');
 
-				if(strlen(w)!=0)
-				{
-					strcpy(&message[pos], w);
-				}
-				else
-				{
-					message[strlen(message)]='?';
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('w'):
-							*last = 'x';
-						break;
-
-						case('x'):
-							*last = 'y';
-						break;
-
-						case('y'):
-							*last = 'z';
-						break;
-
-						case('z'):
-							*last = '9';
-						break;
-
-						case('9'):
-							*last = 'w';
-						break;
-
-						default:
-							message[pos] = 'w';
-						break;
+						strcpy(&message[pos], w);
+					}
+					else
+					{
+						message[strlen(message)]='?';
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = 'w';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('w'):
+								*last = 'x';
+							break;
+
+							case('x'):
+								*last = 'y';
+							break;
+
+							case('y'):
+								*last = 'z';
+							break;
+
+							case('z'):
+								*last = '9';
+							break;
+
+							case('9'):
+								*last = 'w';
+							break;
+
+							default:
+								message[pos] = 'w';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = 'w';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_ASTERISK:
-			if(*text_mode==TEXT_T9)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				char *w = addCode((char*)code, '*');
-
-				if(strlen(w)!=0)
+				if(*text_mode==TEXT_T9)
 				{
-					strcpy(&message[pos], w);
-				}
-			}
-			else
-			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
+					char *w = addCode((char*)code, '*');
 
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
+					if(strlen(w)!=0)
 					{
-						case('*'):
-							*last = '+';
-						break;
-
-						case('+'):
-							*last = '*';
-						break;
-
-						default:
-							message[pos] = '*';
-						break;
+						strcpy(&message[pos], w);
 					}
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = '*';
+					HAL_TIM_Base_Stop(&htim7);
+					pos=strlen(message);
+					char *last = &message[pos>0 ? pos-1 : 0];
+
+					if(TIM7->CNT>0)
+					{
+						switch(*last)
+						{
+							case('*'):
+								*last = '+';
+							break;
+
+							case('+'):
+								*last = '*';
+							break;
+
+							default:
+								message[pos] = '*';
+							break;
+						}
+					}
+					else
+					{
+						message[pos>0 ? pos : 0] = '*';
+					}
+
+					TIM7->CNT=0;
+					HAL_TIM_Base_Start_IT(&htim7);
 				}
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 			}
-
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-			setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 		break;
 
 		case KEY_0:
-			message[strlen(message)]=' ';
-		    pos=strlen(message);
+			if(*disp_state==DISP_TEXT_ENTRY)
+			{
+				message[strlen(message)]=' ';
+				pos=strlen(message);
 
-			drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-		    setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 
-			memset((char*)code, 0, strlen((char*)code));
+				memset((char*)code, 0, strlen((char*)code));
+			}
 		break;
 
 		case KEY_HASH:
-			if(disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 					*text_mode = TEXT_NORM;
@@ -1215,7 +1289,7 @@ void setFreqRF(uint32_t freq)
 	reloadRF();
 }
 
-void setRF(uint8_t state)
+void setRF(radio_state_t state)
 {
 	//0 for rx, 1 for tx
 	maskSetRegRF(0x30, 0x0060, (state+1)<<5);
@@ -1312,7 +1386,7 @@ void setModeRF(rf_mode_t mode)
 	reloadRF(); //reload
 }
 
-void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode)
+void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode, rf_power_t pwr)
 {
 	char msg[128]; //debug
 	uint8_t data[64]={0};
@@ -1320,15 +1394,18 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode)
 	//PTT off
 	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
 
-	//low RF power
-	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
+	//RF power
+	if(pwr==RF_PWR_LOW)
+		HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
+	else
+		HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
 
 	//turn on the module
 	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 1);
 	HAL_Delay(100);
 
 	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 20);
-	HAL_UART_Receive(&huart4, data, 64, 50); //naive, blocking
+	HAL_UART_Receive(&huart4, data, 64, 50); //naїve, blocking
 
 	//display the received data
 	uint8_t len=strlen((char*)data);
@@ -1362,8 +1439,10 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode)
 	setRegRF(0x42, 0x1052);
 	setRegRF(0x43, 0x0100);
 	setRegRF(0x44, 0x07FF);	//Set gain_tx (voice digital gain after tx ADC downsample); to 0x7
-	setRegRF(0x59, 0x0B90);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
-							//and xmitter_dev (voice/subaudio TX FM deviation); to 0x2E
+	setRegRF(0x59, (75<<6) | 0x10);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
+									//and xmitter_dev (voice/subaudio TX FM deviation); to 0x2E
+									//original value: 0x0B90 = (0x2E<<6) | 0x10
+									//xmitter_dev=75 gives good M17 deviation
 	setRegRF(0x47, 0x7F2F);
 	setRegRF(0x4F, 0x2C62);
 	setRegRF(0x53, 0x0094);
@@ -1422,7 +1501,7 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode)
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	chBwRF(bw);
 
-	//deviation control - gains?
+	//deviation control - gains
 	setRegRF(0x41, 0x0070); //"Voice digital gain", was 0x0070
 	setRegRF(0x44, 0x0022); //"Voice digital gain after tx ADC down sample", was 0x0022
 
@@ -1430,6 +1509,104 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode)
 	sprintf(msg, "[RF module] Setting frequency to %ldHz\n", freq);
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	setFreqRF(freq);
+}
+
+void shutdownRF(void)
+{
+	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
+	char msg[128];
+	sprintf(msg, "[RF module] Shutdown\n");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+}
+
+//M17 - int8_t based functions (as opposed to libm17's float)
+void send_preamble_i(int8_t out[SYM_PER_FRA], uint32_t *cnt)
+{
+	//only pre-LSF is supported
+    for(uint16_t i=0; i<SYM_PER_FRA/2; i++) //40ms * 4800 = 192
+    {
+        out[(*cnt)++]=+3;
+        out[(*cnt)++]=-3;
+    }
+}
+
+void send_syncword_i(int8_t out[SYM_PER_SWD], uint32_t *cnt, const uint16_t syncword)
+{
+    for(uint8_t i=0; i<SYM_PER_SWD*2; i+=2)
+    {
+        out[(*cnt)++]=symbol_map[(syncword>>(14-i))&3];
+    }
+}
+
+void send_data_i(int8_t out[SYM_PER_PLD], uint32_t *cnt, const uint8_t* in)
+{
+    for(uint16_t i=0; i<SYM_PER_PLD; i++) //40ms * 4800 - 8 (syncword)
+    {
+        out[(*cnt)++]=symbol_map[in[2*i]*2+in[2*i+1]];
+    }
+}
+
+void send_eot_i(int8_t out[SYM_PER_FRA], uint32_t *cnt)
+{
+    for(uint16_t i=0; i<SYM_PER_FRA; i++) //40ms * 4800 = 192
+    {
+        out[(*cnt)++]=eot_symbols[i%8];
+    }
+}
+
+void send_frame_i(int8_t out[SYM_PER_FRA], const uint8_t* data, const frame_t type, const lsf_t* lsf)
+{
+    uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
+    uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
+    uint32_t sym_cnt=0;                 //symbols written counter
+
+    if(type==FRAME_LSF)
+    {
+        send_syncword_i(out, &sym_cnt, SYNC_LSF);
+        conv_encode_LSF(enc_bits, lsf);
+    }
+    else if(type==FRAME_PKT)
+    {
+		//(void)lsf;
+        send_syncword_i(out, &sym_cnt, SYNC_PKT);
+        conv_encode_packet_frame(enc_bits, data); //packet frames require 200-bit payload chunks plus a 6-bit counter
+    }
+
+    //common stuff
+    reorder_bits(rf_bits, enc_bits);
+    randomize_bits(rf_bits);
+    send_data_i(out, &sym_cnt, rf_bits);
+}
+
+//sps=10
+void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], const float* flt, uint8_t phase_inv)
+{
+	static int8_t last[81]; //memory for last symbols
+
+	for(uint8_t i=0; i<SYM_PER_FRA; i++)
+	{
+		for(uint8_t j=0; j<10; j++)
+		{
+			for(uint8_t k=0; k<80; k++)
+				last[k]=last[k+1];
+
+			if(j==0)
+			{
+				if(phase_inv) //normal phase - invert the symbol stream as GBA inverts the output
+					last[80]=-in[i];
+				else
+					last[80]= in[i];
+			}
+			else
+				last[80]=0;
+
+			float acc=0.0f;
+			for(uint8_t k=0; k<81; k++)
+				acc+=last[k]*flt[k];
+
+			out[i*10+j]=DAC_IDLE+acc*300.0f;
+		}
+	}
 }
 /* USER CODE END 0 */
 
@@ -1474,24 +1651,25 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-  for(uint16_t i=0; i<4800; i++)
-	  wavetable[i] = 2048.0f + 300.0f * sinf(i/20.0f * 2.0f * M_PI);
+  #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
+  	  SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
+  #endif
 
-  //set baseband DAC to idle, TODO: fix this
-  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)wavetable, 1, DAC_ALIGN_12B_R);
+  //set baseband DAC to idle
+  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
   HAL_TIM_Base_Start(&htim6);
 
-  HAL_Delay(1000);
+  HAL_Delay(200);
 
   dispInit();
   dispClear(disp_buff, 0);
   setBacklight(0);
 
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
-  //playBeep(100);
-  HAL_Delay(1000);
+  initRF(dev_settings.tx_frequency, dev_settings.ch_bw, dev_settings.mode, dev_settings.rf_pwr);
+  //playBeep(50);
 
-  showMainScreen(disp_buff);
+  showMainScreen(disp_buff, &disp_state);
   //HAL_Delay(1000);
 
   //showMenu(disp_buff, &disp_state, "Main menu");
@@ -1504,34 +1682,46 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  handleKey(disp_buff, disp_state, &text_mode, scanKeys());
+	  handleKey(disp_buff, &disp_state, &text_mode, scanKeys());
 	  HAL_Delay(100);
 	  if(usb_drdy)
 	  {
 		  if(usb_rx[0]=='a')
-			  setBacklight(usb_rx[1]);
+			  setBacklight(atoi((char*)&usb_rx[1]));
 		  else if(usb_rx[0]=='b')
-			  playBeep(usb_rx[1]);
+			  playBeep(atoi((char*)&usb_rx[1]));
 		  else if(usb_rx[0]=='c')
-			  initRF(dev_settings.tx_frequency, RF_BW_12K5, RF_MODE_4FSK);
+			  ;
 		  else if(usb_rx[0]=='d')
 		  {
 			  char msg[128];
 			  sprintf(msg, "[RF module] PTT on\n");
 			  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-			  setRF(1);
+			  radio_state = RF_TX;
+			  setRF(radio_state);
 		  }
 		  else if(usb_rx[0]=='e')
 		  {
 			  char msg[128];
 			  sprintf(msg, "[RF module] PTT off\n");
 			  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-			  setRF(0);
+			  radio_state = RF_RX;
+			  setRF(radio_state);
 		  }
 		  else if(usb_rx[0]=='f')
 		  {
-			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-			  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)wavetable, 4800, DAC_ALIGN_12B_R);
+			  set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
+
+			  uint32_t cnt=0;
+			  send_preamble_i(frame_symbols, &cnt);
+			  filter_symbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
+
+			  send_frame_i(frame_symbols, NULL, FRAME_LSF, &lsf);
+			  filter_symbols(&frame_samples[1][0], frame_symbols, rrc_taps_10, 0);
+		  }
+		  else if(usb_rx[0]=='g')
+		  {
+			  setRegRF(0x59, (atoi((char*)&usb_rx[1])<<6) | 0x10);
 		  }
 
 		  usb_drdy=0;

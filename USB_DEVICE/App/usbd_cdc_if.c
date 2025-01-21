@@ -269,6 +269,7 @@ static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
   extern uint8_t usb_drdy;
 
   memcpy(usb_rx, Buf, *Len);
+  usb_rx[*Len]=0; //null termination
   usb_len=*Len;
   usb_drdy=1;
 
