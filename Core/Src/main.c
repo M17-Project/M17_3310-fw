@@ -115,6 +115,18 @@ typedef enum key
 	KEY_HASH
 } key_t;
 
+typedef enum ch_bw
+{
+	RF_BW_12K5,
+	RF_BW_25K
+} ch_bw_t;
+
+typedef enum rf_mode
+{
+	RF_MODE_FM,
+	RF_MODE_4FSK
+} rf_mode_t;
+
 //T9 related variables
 volatile char code[15]="";
 char message[128]="";
@@ -133,6 +145,7 @@ typedef struct dev_settings
 
 	uint8_t backlight;
 
+	char mode_str[5];
 	char ch_name[24];
 	uint32_t rx_frequency;
 	uint32_t tx_frequency;
@@ -140,15 +153,19 @@ typedef struct dev_settings
 
 dev_settings_t dev_settings =
 {
-	"SP5WWP",
+	"N0KIA",
 	{"OpenRTX", "rulez"},
 
 	200,
 
+	"M17",
 	"M17 IARU R1",
 	433475000,
 	433475000
 };
+
+//dac
+uint16_t wavetable[4800];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -183,7 +200,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 {
-	;//
+	HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)wavetable, 4800, DAC_ALIGN_12B_R);
 }
 
 //T9 related
@@ -391,21 +408,25 @@ void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
 	disp_state = DISP_MAIN_SCR;
 	dispClear(buff, 0);
 
-	setString(buff, 0, 0, &nokia_small, "M17", 0, ALIGN_LEFT);
+	setString(buff, 0, 0, &nokia_small, dev_settings.mode_str, 0, ALIGN_LEFT);
 
-	setString(buff, 0, 9, &nokia_big, dev_settings.ch_name, 0, ALIGN_CENTER);
+	setString(buff, 0, 12, &nokia_big, dev_settings.ch_name, 0, ALIGN_CENTER);
 
-	sprintf(str, "%ld.%04ld",
+	sprintf(str, "R %ld.%04ld",
 			dev_settings.rx_frequency/1000000,
-			dev_settings.rx_frequency - (dev_settings.rx_frequency/1000000)*1000000);
-	setString(buff, 0, 24, &nokia_small, str, 0, ALIGN_CENTER);
+			(dev_settings.rx_frequency - (dev_settings.rx_frequency/1000000)*1000000)/100);
+	setString(buff, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
 
-	sprintf(str, "%ld.%04ld",
+	sprintf(str, "T %ld.%04ld",
 			dev_settings.tx_frequency/1000000,
-			dev_settings.tx_frequency - (dev_settings.tx_frequency/1000000)*1000000);
-	setString(buff, 0, 32, &nokia_small, str, 0, ALIGN_CENTER);
+			(dev_settings.tx_frequency - (dev_settings.tx_frequency/1000000)*1000000)/100);
+	setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 
-	;
+	//is the battery charging? (read /CHG signal)
+	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
+		setString(buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display
+	else
+		setString(buff, RES_X-1, 0, &nokia_small, "B+", 1, ALIGN_RIGHT); //clear
 }
 
 void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *callsign)
@@ -1200,15 +1221,101 @@ void setRF(uint8_t state)
 	maskSetRegRF(0x30, 0x0060, (state+1)<<5);
 }
 
-void initRF(void)
+void chBwRF(ch_bw_t bw)
+{
+	if(bw==RF_BW_12K5)
+	{
+		setRegRF(0x15, 0x1100);
+		setRegRF(0x32, 0x4495);
+		setRegRF(0x3A, 0x40C3);
+		setRegRF(0x3F, 0x29D1);
+		setRegRF(0x3C, 0x1B34);
+		setRegRF(0x48, 0x19B1);
+		setRegRF(0x60, 0x0F17);
+		setRegRF(0x62, 0x1425);
+		setRegRF(0x65, 0x2494);
+		setRegRF(0x66, 0xEB2E);
+		setRegRF(0x7F, 0x0001);
+		setRegRF(0x06, 0x0014);
+		setRegRF(0x07, 0x020C);
+		setRegRF(0x08, 0x0214);
+		setRegRF(0x09, 0x030C);
+		setRegRF(0x0A, 0x0314);
+		setRegRF(0x0B, 0x0324);
+		setRegRF(0x0C, 0x0344);
+		setRegRF(0x0D, 0x1344);
+		setRegRF(0x0E, 0x1B44);
+		setRegRF(0x0F, 0x3F44);
+		setRegRF(0x12, 0xE0EB);
+		setRegRF(0x7F, 0x0000);
+
+		maskSetRegRF(0x30, 0x3000, 0x0000);
+	}
+	else
+	{
+		setRegRF(0x15, 0x1F00);
+		setRegRF(0x32, 0x7564);
+		setRegRF(0x3A, 0x40C3);
+		setRegRF(0x3C, 0x1B34);
+		setRegRF(0x3F, 0x29D1);
+		setRegRF(0x48, 0x1F3C);
+		setRegRF(0x60, 0x0F17);
+		setRegRF(0x62, 0x3263);
+		setRegRF(0x65, 0x248A);
+		setRegRF(0x66, 0xFFAE);
+		setRegRF(0x7F, 0x0001);
+		setRegRF(0x06, 0x0024);
+		setRegRF(0x07, 0x0214);
+		setRegRF(0x08, 0x0224);
+		setRegRF(0x09, 0x0314);
+		setRegRF(0x0A, 0x0324);
+		setRegRF(0x0B, 0x0344);
+		setRegRF(0x0C, 0x0384);
+		setRegRF(0x0D, 0x1384);
+		setRegRF(0x0E, 0x1B84);
+		setRegRF(0x0F, 0x3F84);
+		setRegRF(0x12, 0xE0EB);
+		setRegRF(0x7F, 0x0000);
+
+		maskSetRegRF(0x30, 0x3000, 0x3000);
+	}
+
+	reloadRF(); //reload
+}
+
+void setModeRF(rf_mode_t mode)
+{
+	if(mode==RF_MODE_4FSK)
+	{
+		setRegRF(0x3A, 0x00C2);
+		setRegRF(0x33, 0x45F5);
+		setRegRF(0x41, 0x4731);
+		setRegRF(0x42, 0x1036);
+		setRegRF(0x43, 0x00BB);
+		setRegRF(0x58, 0xBCFD);	//Bit 0  = 1: CTCSS LPF bandwidth to 250Hz
+								//Bit 3  = 1: bypass CTCSS HPF
+								//Bit 4  = 1: bypass CTCSS LPF
+								//Bit 5  = 1: bypass voice LPF
+								//Bit 6  = 1: bypass voice HPF
+								//Bit 7  = 1: bypass pre/de-emphasis
+								//Bit 11 = 1: bypass VOX HPF
+								//Bit 12 = 1: bypass VOX LPF
+								//Bit 13 = 1: bypass RSSI LPF
+		setRegRF(0x44, 0x06CC);
+		setRegRF(0x40, 0x0031);
+	}
+	else
+	{
+		;
+	}
+
+	reloadRF(); //reload
+}
+
+void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode)
 {
 	char msg[128]; //debug
 	uint8_t data[64]={0};
-
-	//set baseband DAC to idle
-	uint16_t val = 2048;
-	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&val, 1, DAC_ALIGN_12B_R);
-	HAL_TIM_Base_Start(&htim6);
 
 	//PTT off
 	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
@@ -1305,74 +1412,24 @@ void initRF(void)
 
 	setRegRF(0x40, 0x0031);
 
-	//set mode: 4FSK
-	setRegRF(0x3A, 0x00C2);
-	setRegRF(0x33, 0x45F5);
-	setRegRF(0x41, 0x4731);
-	setRegRF(0x42, 0x1036);
-	setRegRF(0x43, 0x00BB);
-	setRegRF(0x58, 0xBCFD);	//Bit 0  = 1: CTCSS LPF bandwidth to 250Hz
-							//Bit 3  = 1: bypass CTCSS HPF
-							//Bit 4  = 1: bypass CTCSS LPF
-							//Bit 5  = 1: bypass voice LPF
-							//Bit 6  = 1: bypass voice HPF
-							//Bit 7  = 1: bypass pre/de-emphasis
-							//Bit 11 = 1: bypass VOX HPF
-							//Bit 12 = 1: bypass VOX LPF
-							//Bit 13 = 1: bypass RSSI LPF
-	setRegRF(0x44, 0x06CC);
-	setRegRF(0x40, 0x0031);
+	//set mode
+	sprintf(msg, "[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"4FSK":"FM");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	setModeRF(mode);
 
-	reloadRF(); //reload
+	//set bandwidth
+	sprintf(msg, "[RF module] Setting bandwidth to %skHz\n", (bw==RF_BW_12K5)?"12.5":"25");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	chBwRF(bw);
 
-	//set bandwidth: 12.5kHz
-	setRegRF(0x15, 0x1100);
-	setRegRF(0x32, 0x4495);
-	setRegRF(0x3A, 0x40C3);
-	setRegRF(0x3F, 0x29D1);
-	setRegRF(0x3C, 0x1B34);
-	setRegRF(0x48, 0x19B1);
-	setRegRF(0x60, 0x0F17);
-	setRegRF(0x62, 0x1425);
-	setRegRF(0x65, 0x2494);
-	setRegRF(0x66, 0xEB2E);
-	setRegRF(0x7F, 0x0001);
-	setRegRF(0x06, 0x0014);
-	setRegRF(0x07, 0x020C);
-	setRegRF(0x08, 0x0214);
-	setRegRF(0x09, 0x030C);
-	setRegRF(0x0A, 0x0314);
-	setRegRF(0x0B, 0x0324);
-	setRegRF(0x0C, 0x0344);
-	setRegRF(0x0D, 0x1344);
-	setRegRF(0x0E, 0x1B44);
-	setRegRF(0x0F, 0x3F44);
-	setRegRF(0x12, 0xE0EB);
-	setRegRF(0x7F, 0x0000);
-
-	maskSetRegRF(0x30, 0x3000, 0x0000);
-
-	reloadRF(); //reload
-
-	//no idea what this does
-	setRegRF(0x41, 0x0070);
-	setRegRF(0x44, 0x0022);
+	//deviation control - gains?
+	setRegRF(0x41, 0x0070); //"Voice digital gain", was 0x0070
+	setRegRF(0x44, 0x0022); //"Voice digital gain after tx ADC down sample", was 0x0022
 
 	//set frequency
-	sprintf(msg, "[RF module] Setting frequency to %ldHz\n", dev_settings.tx_frequency);
+	sprintf(msg, "[RF module] Setting frequency to %ldHz\n", freq);
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-	setFreqRF(dev_settings.tx_frequency);
-
-	//test
-	sprintf(msg, "[RF module] Test start\n");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-
-	setRF(1);
-	HAL_Delay(5000);
-	setRF(0);
-
-	sprintf(msg, "[RF module] Test ended\n");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	setFreqRF(freq);
 }
 /* USER CODE END 0 */
 
@@ -1417,6 +1474,13 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
+  for(uint16_t i=0; i<4800; i++)
+	  wavetable[i] = 2048.0f + 300.0f * sinf(i/20.0f * 2.0f * M_PI);
+
+  //set baseband DAC to idle, TODO: fix this
+  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)wavetable, 1, DAC_ALIGN_12B_R);
+  HAL_TIM_Base_Start(&htim6);
+
   HAL_Delay(1000);
 
   dispInit();
@@ -1428,12 +1492,12 @@ int main(void)
   HAL_Delay(1000);
 
   showMainScreen(disp_buff);
-  HAL_Delay(1000);
+  //HAL_Delay(1000);
 
-  showMenu(disp_buff, &disp_state, "Main menu");
-  HAL_Delay(1000);
+  //showMenu(disp_buff, &disp_state, "Main menu");
+  //HAL_Delay(1000);
 
-  showTextEntry(disp_buff, &disp_state, text_mode);
+  //showTextEntry(disp_buff, &disp_state, text_mode);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -1444,17 +1508,32 @@ int main(void)
 	  HAL_Delay(100);
 	  if(usb_drdy)
 	  {
-		  //drawRect(disp_buff, 0, 40, RES_X-1, RES_Y-1, 1, 1);
-		  //char line[24]="";
-		  //sprintf(line, "cnt=%d", 1337);
-		  //usb_rx[usb_len]=0; //null termination
-		  //setString(disp_buff, 0, 40, &nokia_small, (char*)usb_rx, 0, ALIGN_LEFT);
 		  if(usb_rx[0]=='a')
 			  setBacklight(usb_rx[1]);
 		  else if(usb_rx[0]=='b')
 			  playBeep(usb_rx[1]);
 		  else if(usb_rx[0]=='c')
-			  initRF();
+			  initRF(dev_settings.tx_frequency, RF_BW_12K5, RF_MODE_4FSK);
+		  else if(usb_rx[0]=='d')
+		  {
+			  char msg[128];
+			  sprintf(msg, "[RF module] PTT on\n");
+			  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			  setRF(1);
+		  }
+		  else if(usb_rx[0]=='e')
+		  {
+			  char msg[128];
+			  sprintf(msg, "[RF module] PTT off\n");
+			  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			  setRF(0);
+		  }
+		  else if(usb_rx[0]=='f')
+		  {
+			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+			  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)wavetable, 4800, DAC_ALIGN_12B_R);
+		  }
+
 		  usb_drdy=0;
 	  }
     /* USER CODE END WHILE */
