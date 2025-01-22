@@ -1519,65 +1519,6 @@ void shutdownRF(void)
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 }
 
-//M17 - int8_t based functions (as opposed to libm17's float)
-void send_preamble_i(int8_t out[SYM_PER_FRA], uint32_t *cnt)
-{
-	//only pre-LSF is supported
-    for(uint16_t i=0; i<SYM_PER_FRA/2; i++) //40ms * 4800 = 192
-    {
-        out[(*cnt)++]=+3;
-        out[(*cnt)++]=-3;
-    }
-}
-
-void send_syncword_i(int8_t out[SYM_PER_SWD], uint32_t *cnt, const uint16_t syncword)
-{
-    for(uint8_t i=0; i<SYM_PER_SWD*2; i+=2)
-    {
-        out[(*cnt)++]=symbol_map[(syncword>>(14-i))&3];
-    }
-}
-
-void send_data_i(int8_t out[SYM_PER_PLD], uint32_t *cnt, const uint8_t* in)
-{
-    for(uint16_t i=0; i<SYM_PER_PLD; i++) //40ms * 4800 - 8 (syncword)
-    {
-        out[(*cnt)++]=symbol_map[in[2*i]*2+in[2*i+1]];
-    }
-}
-
-void send_eot_i(int8_t out[SYM_PER_FRA], uint32_t *cnt)
-{
-    for(uint16_t i=0; i<SYM_PER_FRA; i++) //40ms * 4800 = 192
-    {
-        out[(*cnt)++]=eot_symbols[i%8];
-    }
-}
-
-void send_frame_i(int8_t out[SYM_PER_FRA], const uint8_t* data, const frame_t type, const lsf_t* lsf)
-{
-    uint8_t enc_bits[SYM_PER_PLD*2];    //type-2 bits, unpacked
-    uint8_t rf_bits[SYM_PER_PLD*2];     //type-4 bits, unpacked
-    uint32_t sym_cnt=0;                 //symbols written counter
-
-    if(type==FRAME_LSF)
-    {
-        send_syncword_i(out, &sym_cnt, SYNC_LSF);
-        conv_encode_LSF(enc_bits, lsf);
-    }
-    else if(type==FRAME_PKT)
-    {
-		//(void)lsf;
-        send_syncword_i(out, &sym_cnt, SYNC_PKT);
-        conv_encode_packet_frame(enc_bits, data); //packet frames require 200-bit payload chunks plus a 6-bit counter
-    }
-
-    //common stuff
-    reorder_bits(rf_bits, enc_bits);
-    randomize_bits(rf_bits);
-    send_data_i(out, &sym_cnt, rf_bits);
-}
-
 //sps=10
 void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], const float* flt, uint8_t phase_inv)
 {
@@ -1713,10 +1654,10 @@ int main(void)
 			  set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
 
 			  uint32_t cnt=0;
-			  send_preamble_i(frame_symbols, &cnt);
+			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
 			  filter_symbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
 
-			  send_frame_i(frame_symbols, NULL, FRAME_LSF, &lsf);
+			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf, 0, 0);
 			  filter_symbols(&frame_samples[1][0], frame_symbols, rrc_taps_10, 0);
 		  }
 		  else if(usb_rx[0]=='g')
