@@ -178,9 +178,11 @@ dev_settings_t dev_settings =
 };
 
 //M17
-uint16_t frame_samples[2][SYM_PER_FRA*10]={{DAC_IDLE}, {0}}; //sps=10
+uint16_t frame_samples[2][SYM_PER_FRA*10]; //sps=10
 int8_t frame_symbols[SYM_PER_FRA];
 lsf_t lsf;
+uint8_t frame_cnt; //frame counter, preamble=0
+volatile uint8_t frame_pend; //frame generation pending?
 
 //radio
 typedef enum radio_state
@@ -189,7 +191,7 @@ typedef enum radio_state
 	RF_TX
 } radio_state_t;
 
-radio_state_t radio_state = RF_RX;
+radio_state_t radio_state;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -226,7 +228,15 @@ void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 {
 	if(radio_state==RF_TX)
 	{
-		;
+		frame_pend=1;
+	}
+}
+
+void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
+{
+	if(radio_state==RF_TX)
+	{
+		HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[frame_cnt%2][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
 	}
 }
 
@@ -565,6 +575,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			{
 				radio_state = (radio_state==RF_RX)? RF_TX : RF_RX;
 				setRF(radio_state);
+				frame_cnt=0;
+				frame_pend=1;
 			}
 			else
 			{
@@ -1439,10 +1451,10 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode, rf_power_t pwr)
 	setRegRF(0x42, 0x1052);
 	setRegRF(0x43, 0x0100);
 	setRegRF(0x44, 0x07FF);	//Set gain_tx (voice digital gain after tx ADC downsample); to 0x7
-	setRegRF(0x59, (75<<6) | 0x10);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
+	setRegRF(0x59, (65<<6) | 0x10);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
 									//and xmitter_dev (voice/subaudio TX FM deviation); to 0x2E
 									//original value: 0x0B90 = (0x2E<<6) | 0x10
-									//xmitter_dev=75 gives good M17 deviation
+									//xmitter_dev=65 gives good M17 deviation
 	setRegRF(0x47, 0x7F2F);
 	setRegRF(0x4F, 0x2C62);
 	setRegRF(0x53, 0x0094);
@@ -1545,7 +1557,7 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 			for(uint8_t k=0; k<81; k++)
 				acc+=last[k]*flt[k];
 
-			out[i*10+j]=DAC_IDLE+acc*300.0f;
+			out[i*10+j]=DAC_IDLE+acc*250.0f;
 		}
 	}
 }
@@ -1596,7 +1608,10 @@ int main(void)
   	  SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
   #endif
 
+  radio_state = RF_RX;
+
   //set baseband DAC to idle
+  frame_samples[0][0]=DAC_IDLE;
   HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
   HAL_TIM_Base_Start(&htim6);
 
@@ -1608,6 +1623,7 @@ int main(void)
 
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
   initRF(dev_settings.tx_frequency, dev_settings.ch_bw, dev_settings.mode, dev_settings.rf_pwr);
+  set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
   //playBeep(50);
 
   showMainScreen(disp_buff, &disp_state);
@@ -1624,7 +1640,67 @@ int main(void)
   while(1)
   {
 	  handleKey(disp_buff, &disp_state, &text_mode, scanKeys());
-	  HAL_Delay(100);
+	  //HAL_Delay(100);
+
+	  if(frame_pend)
+	  {
+		  //this is a workaround for the module's initial frequency wobble after RX->TX transition
+		  const uint8_t warmup = 25; //each frame is 40ms, therefore this is 1s of a solid preamble
+
+		  if(frame_cnt==0)
+		  {
+			  //preamble
+			  uint32_t cnt=0;
+			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
+			  filter_symbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
+
+			  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[0][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
+		  }
+
+		  else if(frame_cnt<warmup)
+		  {
+			  //more preamble
+			  uint32_t cnt=0;
+			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
+			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
+		  }
+		  else if(frame_cnt==warmup)
+		  {
+			  //LSF
+			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf, 0, 0);
+			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
+		  }
+		  else
+		  {
+			  uint8_t payload[26];
+
+			  memset(payload, 0, 26);
+			  payload[0] = 0x05;
+			  uint8_t len = sprintf((char*)&payload[1], "Hey, what's up?");
+			  uint16_t crc = CRC_M17(payload, 1+len+1);
+			  payload[len+2] = crc>>8;
+			  payload[len+3] = crc&0xFF;
+			  payload[25] = 0x80 | ((len+4)<<2);
+
+			  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf, frame_cnt-(warmup+2), (frame_cnt-2)%6);
+			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
+		  }
+
+		  if(frame_cnt<1+warmup)
+		  {
+			  frame_cnt++;
+		  }
+		  else
+		  {
+			  radio_state=RF_RX;
+			  setRF(radio_state);
+			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+			  frame_cnt=0;
+		  }
+
+		  frame_pend=0;
+	  }
+
 	  if(usb_drdy)
 	  {
 		  if(usb_rx[0]=='a')
@@ -1632,7 +1708,9 @@ int main(void)
 		  else if(usb_rx[0]=='b')
 			  playBeep(atoi((char*)&usb_rx[1]));
 		  else if(usb_rx[0]=='c')
+		  {
 			  ;
+		  }
 		  else if(usb_rx[0]=='d')
 		  {
 			  char msg[128];
@@ -1651,14 +1729,10 @@ int main(void)
 		  }
 		  else if(usb_rx[0]=='f')
 		  {
-			  set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
-
-			  uint32_t cnt=0;
-			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-			  filter_symbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
-
-			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf, 0, 0);
-			  filter_symbols(&frame_samples[1][0], frame_symbols, rrc_taps_10, 0);
+			  radio_state = (radio_state==RF_RX)? RF_TX : RF_RX;
+			  setRF(radio_state);
+			  frame_cnt=0;
+			  frame_pend=1;
 		  }
 		  else if(usb_rx[0]=='g')
 		  {
