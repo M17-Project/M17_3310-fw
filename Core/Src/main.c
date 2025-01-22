@@ -183,6 +183,8 @@ int8_t frame_symbols[SYM_PER_FRA];
 lsf_t lsf;
 uint8_t frame_cnt; //frame counter, preamble=0
 volatile uint8_t frame_pend; //frame generation pending?
+uint8_t packet_payload[33*25];
+uint8_t packet_bytes;
 
 //radio
 typedef enum radio_state
@@ -492,7 +494,7 @@ void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_e
 	else
 		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
 
-	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Options", 0, ALIGN_CENTER);
+	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
 }
 
 void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, char *title)
@@ -573,6 +575,21 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_OK:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
+				;
+			}
+			else if(*disp_state==DISP_TEXT_ENTRY)
+			{
+				uint16_t msg_len = strlen(message);
+
+				memset(packet_payload, 0, sizeof(packet_payload));
+				packet_payload[0]=0x05; //packet type: SMS
+				memcpy(&packet_payload[1], message, msg_len);
+				uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
+				packet_payload[msg_len+2] = crc>>8;
+				packet_payload[msg_len+3] = crc&0xFF;
+
+				packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
+
 				radio_state = (radio_state==RF_RX)? RF_TX : RF_RX;
 				setRF(radio_state);
 				frame_cnt=0;
@@ -580,12 +597,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			}
 			else
 			{
-				/*drawRect(buff, 0, 40, RES_X-1, RES_Y-1, 1, 1);
-				char line[16]="";
-				//sprintf(line, "pos=%d", pos);
-				//sprintf(line, "strlen=%d", strlen(message));
-				sprintf(line, "cnt=%lu", TIM7->CNT);
-				setString(buff, 0, 40, &nokia_small, line, 0, ALIGN_LEFT);*/
+				;
 			}
 		break;
 
@@ -1627,12 +1639,12 @@ int main(void)
   //playBeep(50);
 
   showMainScreen(disp_buff, &disp_state);
-  //HAL_Delay(1000);
+  HAL_Delay(1000);
 
-  //showMenu(disp_buff, &disp_state, "Main menu");
-  //HAL_Delay(1000);
+  showMenu(disp_buff, &disp_state, "Main menu");
+  HAL_Delay(1000);
 
-  //showTextEntry(disp_buff, &disp_state, text_mode);
+  showTextEntry(disp_buff, &disp_state, text_mode);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -1640,7 +1652,9 @@ int main(void)
   while(1)
   {
 	  handleKey(disp_buff, &disp_state, &text_mode, scanKeys());
-	  //HAL_Delay(100);
+
+	  if(radio_state==RF_RX)
+		  HAL_Delay(100);
 
 	  if(frame_pend)
 	  {
@@ -1659,7 +1673,7 @@ int main(void)
 
 		  else if(frame_cnt<warmup)
 		  {
-			  //more preamble
+			  //more preamble :D
 			  uint32_t cnt=0;
 			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
 			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
@@ -1672,21 +1686,20 @@ int main(void)
 		  }
 		  else
 		  {
+			  uint16_t bytes_left=packet_bytes-(frame_cnt-warmup-1)*25;
 			  uint8_t payload[26];
 
-			  memset(payload, 0, 26);
-			  payload[0] = 0x05;
-			  uint8_t len = sprintf((char*)&payload[1], "Hey, what's up?");
-			  uint16_t crc = CRC_M17(payload, 1+len+1);
-			  payload[len+2] = crc>>8;
-			  payload[len+3] = crc&0xFF;
-			  payload[25] = 0x80 | ((len+4)<<2);
+			  memcpy(payload, &packet_payload[(frame_cnt-warmup-1)*25], 25);
+			  if(bytes_left>25)
+				  payload[25] = (frame_cnt-warmup-1)<<2;
+			  else
+				  payload[25] = 0x80 | ((bytes_left)<<2);
 
-			  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf, frame_cnt-(warmup+2), (frame_cnt-2)%6);
+			  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf, 0, 0);
 			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
 		  }
 
-		  if(frame_cnt<1+warmup)
+		  if(frame_cnt<(packet_bytes/25+1)+warmup)
 		  {
 			  frame_cnt++;
 		  }
