@@ -151,6 +151,8 @@ typedef struct dev_settings
 	char welcome_msg[2][24];
 
 	uint8_t backlight;
+	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
+	uint16_t kbd_delay; //insensitivity delay after keypress detection
 
 	rf_mode_t mode;
 	char str_mode[6];
@@ -167,6 +169,8 @@ dev_settings_t dev_settings =
 	{"OpenRTX", "rulez"},
 
 	255,
+	750,
+	150,
 
 	RF_MODE_4FSK,
 	"M17",
@@ -511,13 +515,18 @@ void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, char *title
 	setString(buff, 1, 4*9, &nokia_small, (char*)"Misc.", 0, ALIGN_ARB);
 }
 
-key_t scanKeys(void)
+//scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
+key_t scanKeys(uint8_t rep)
 {
 	key_t key = KEY_NONE;
 
 	//PD2 down means KEY_OK is pressed
 	if(BTN_OK_GPIO_Port->IDR & BTN_OK_Pin)
+	{
+		if(radio_state==RF_RX)
+			HAL_Delay(rep);
 		return KEY_OK;
+	}
 
 	//column 1
 	COL_1_GPIO_Port->BSRR = (uint32_t)COL_1_Pin;
@@ -533,7 +542,12 @@ key_t scanKeys(void)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_ASTERISK;
 	COL_1_GPIO_Port->BSRR = ((uint32_t)COL_1_Pin<<16);
-	if(key!=KEY_NONE) return key;
+	if(key!=KEY_NONE)
+	{
+		if(radio_state==RF_RX)
+			HAL_Delay(rep);
+		return key;
+	}
 
 	//column 2
 	COL_2_GPIO_Port->BSRR = (uint32_t)COL_2_Pin;
@@ -549,7 +563,12 @@ key_t scanKeys(void)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_0;
 	COL_2_GPIO_Port->BSRR = ((uint32_t)COL_2_Pin<<16);
-	if(key!=KEY_NONE) return key;
+	if(key!=KEY_NONE)
+	{
+		if(radio_state==RF_RX)
+			HAL_Delay(rep);
+		return key;
+	}
 
 	//column 3
 	COL_3_GPIO_Port->BSRR = (uint32_t)COL_3_Pin;
@@ -565,10 +584,16 @@ key_t scanKeys(void)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_HASH;
 	COL_3_GPIO_Port->BSRR = ((uint32_t)COL_3_Pin<<16);
+	if(key!=KEY_NONE)
+	{
+		if(radio_state==RF_RX)
+			HAL_Delay(rep);
+	}
+
 	return key;
 }
 
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, key_t key)
+void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, key_t key)
 {
 	switch(key)
 	{
@@ -579,21 +604,24 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			}
 			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				uint16_t msg_len = strlen(message);
+				if(*radio_state==RF_RX)
+				{
+					uint16_t msg_len = strlen(message);
 
-				memset(packet_payload, 0, sizeof(packet_payload));
-				packet_payload[0]=0x05; //packet type: SMS
-				memcpy(&packet_payload[1], message, msg_len);
-				uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
-				packet_payload[msg_len+2] = crc>>8;
-				packet_payload[msg_len+3] = crc&0xFF;
+					memset(packet_payload, 0, sizeof(packet_payload));
+					packet_payload[0]=0x05; //packet type: SMS
+					memcpy(&packet_payload[1], message, msg_len);
+					uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
+					packet_payload[msg_len+2] = crc>>8;
+					packet_payload[msg_len+3] = crc&0xFF;
 
-				packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
+					packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
 
-				radio_state = (radio_state==RF_RX)? RF_TX : RF_RX;
-				setRF(radio_state);
-				frame_cnt=0;
-				frame_pend=1;
+					*radio_state = RF_TX;
+					setRF(*radio_state);
+					frame_cnt=0;
+					frame_pend=1;
+				}
 			}
 			else
 			{
@@ -661,7 +689,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				}
 				else
 				{
-					message[pos>0 ? pos : 0] = '.';
+					message[pos] = '.';
 				}
 
 				memset((char*)code, 0, strlen((char*)code));
@@ -723,7 +751,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'a';
+						message[pos] = 'a';
 					}
 
 					TIM7->CNT=0;
@@ -784,7 +812,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'd';
+						message[pos] = 'd';
 					}
 
 					TIM7->CNT=0;
@@ -845,7 +873,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'g';
+						message[pos] = 'g';
 					}
 
 					TIM7->CNT=0;
@@ -906,7 +934,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'j';
+						message[pos] = 'j';
 					}
 
 					TIM7->CNT=0;
@@ -967,7 +995,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'm';
+						message[pos] = 'm';
 					}
 
 					TIM7->CNT=0;
@@ -1032,7 +1060,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'p';
+						message[pos] = 'p';
 					}
 
 					TIM7->CNT=0;
@@ -1093,7 +1121,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 't';
+						message[pos] = 't';
 					}
 
 					TIM7->CNT=0;
@@ -1158,7 +1186,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = 'w';
+						message[pos] = 'w';
 					}
 
 					TIM7->CNT=0;
@@ -1207,7 +1235,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 					else
 					{
-						message[pos>0 ? pos : 0] = '*';
+						message[pos] = '*';
 					}
 
 					TIM7->CNT=0;
@@ -1222,8 +1250,38 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_0:
 			if(*disp_state==DISP_TEXT_ENTRY)
 			{
-				message[strlen(message)]=' ';
+				HAL_TIM_Base_Stop(&htim7);
 				pos=strlen(message);
+				char *last = &message[pos>0 ? pos-1 : 0];
+
+				if(TIM7->CNT>0)
+				{
+					switch(*last)
+					{
+						case(' '):
+							*last = '0';
+						break;
+
+						case('0'):
+							*last = ' ';
+						break;
+
+						default:
+							message[pos] = ' ';
+							if(*text_mode==TEXT_T9)
+								pos++;
+						break;
+					}
+				}
+				else
+				{
+					message[pos] = ' ';
+					if(*text_mode==TEXT_T9)
+						pos++;
+				}
+
+				TIM7->CNT=0;
+				HAL_TIM_Base_Start_IT(&htim7);
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
 				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
@@ -1253,6 +1311,12 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			;
 		break;
 	}
+}
+
+//set keyboard insensitivity timer
+void setKeysTimeout(const uint16_t delay)
+{
+	TIM7->ARR=delay*10-1;
 }
 
 //RF module
@@ -1444,7 +1508,7 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode, rf_power_t pwr)
 
 	//SA868S (AT1846S) init sequence (thx, edgetriggered)
 	sprintf(msg, "[RF module] Init sequence start\n");
-	while(CDC_Transmit_FS((uint8_t*)msg, strlen(msg))==USBD_BUSY);
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 
 	setRegRF(0x30, 0x0001);	//Soft reset
 	HAL_Delay(160);
@@ -1463,10 +1527,10 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode, rf_power_t pwr)
 	setRegRF(0x42, 0x1052);
 	setRegRF(0x43, 0x0100);
 	setRegRF(0x44, 0x07FF);	//Set gain_tx (voice digital gain after tx ADC downsample); to 0x7
-	setRegRF(0x59, (65<<6) | 0x10);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
+	setRegRF(0x59, (68<<6) | 0x10);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
 									//and xmitter_dev (voice/subaudio TX FM deviation); to 0x2E
 									//original value: 0x0B90 = (0x2E<<6) | 0x10
-									//xmitter_dev=65 gives good M17 deviation
+									//xmitter_dev=68 gives good M17 deviation
 	setRegRF(0x47, 0x7F2F);
 	setRegRF(0x4F, 0x2C62);
 	setRegRF(0x53, 0x0094);
@@ -1636,6 +1700,7 @@ int main(void)
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
   initRF(dev_settings.tx_frequency, dev_settings.ch_bw, dev_settings.mode, dev_settings.rf_pwr);
   set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
+  setKeysTimeout(dev_settings.kbd_timeout);
   //playBeep(50);
 
   showMainScreen(disp_buff, &disp_state);
@@ -1651,10 +1716,10 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  handleKey(disp_buff, &disp_state, &text_mode, scanKeys());
+	  handleKey(disp_buff, &disp_state, &text_mode, &radio_state, scanKeys(dev_settings.kbd_delay));
 
-	  if(radio_state==RF_RX)
-		  HAL_Delay(100);
+	  //if(radio_state==RF_RX)
+		  //HAL_Delay(100);
 
 	  if(frame_pend)
 	  {
@@ -1681,7 +1746,10 @@ int main(void)
 		  else if(frame_cnt==warmup)
 		  {
 			  //LSF
-			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf, 0, 0);
+			  lsf.meta[0]=0xDE; lsf.meta[1]=0xAD;
+			  lsf.meta[2]=0xBE; lsf.meta[3]=0xEF;
+			  update_LSF_CRC(&lsf);
+			  gen_frame_i8(frame_symbols, lsf.meta, FRAME_LSF, &lsf, 0, 0);
 			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
 		  }
 		  else
@@ -1742,10 +1810,7 @@ int main(void)
 		  }
 		  else if(usb_rx[0]=='f')
 		  {
-			  radio_state = (radio_state==RF_RX)? RF_TX : RF_RX;
-			  setRF(radio_state);
-			  frame_cnt=0;
-			  frame_pend=1;
+			  ;
 		  }
 		  else if(usb_rx[0]=='g')
 		  {
