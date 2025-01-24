@@ -600,7 +600,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_OK:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				;
+				showMenu(buff, disp_state, "Main menu");
+			}
+			else if(*disp_state==DISP_MENU)
+			{
+				//clear message and display text entry screen
+				memset(message, 0, strlen(message));
+				showTextEntry(buff, disp_state, *text_mode);
 			}
 			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
@@ -630,7 +636,11 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_C:
-			if(*disp_state==DISP_MENU)
+			if(*disp_state==DISP_MAIN_SCR)
+			{
+				;
+			}
+			else if(*disp_state==DISP_MENU)
 			{
 				showMainScreen(buff, disp_state);
 		    }
@@ -1704,12 +1714,6 @@ int main(void)
   //playBeep(50);
 
   showMainScreen(disp_buff, &disp_state);
-  HAL_Delay(1000);
-
-  showMenu(disp_buff, &disp_state, "Main menu");
-  HAL_Delay(1000);
-
-  showTextEntry(disp_buff, &disp_state, text_mode);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -1718,9 +1722,6 @@ int main(void)
   {
 	  handleKey(disp_buff, &disp_state, &text_mode, &radio_state, scanKeys(dev_settings.kbd_delay));
 
-	  //if(radio_state==RF_RX)
-		  //HAL_Delay(100);
-
 	  if(frame_pend)
 	  {
 		  //this is a workaround for the module's initial frequency wobble after RX->TX transition
@@ -1728,6 +1729,9 @@ int main(void)
 
 		  if(frame_cnt==0)
 		  {
+			  dispClear(disp_buff, 0);
+			  setString(disp_buff, 0, 12, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+
 			  //preamble
 			  uint32_t cnt=0;
 			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
@@ -1777,6 +1781,8 @@ int main(void)
 			  setRF(radio_state);
 			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
 			  frame_cnt=0;
+
+			  showMainScreen(disp_buff, &disp_state);
 		  }
 
 		  frame_pend=0;
