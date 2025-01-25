@@ -95,6 +95,16 @@ typedef enum disp_state
 
 disp_state_t disp_state = DISP_NONE;
 
+typedef struct menu
+{
+	char title[24];
+	uint8_t num_items;
+	char item[32][24]; //32 entries max, 24 chars per item
+	char value[32][24];
+} menu_t;
+
+menu_t main_menu = {"Main menu", 3, {"Messaging", "Settings", "Info"}, {}};
+
 typedef enum key
 {
 	KEY_NONE,
@@ -501,18 +511,25 @@ void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_e
 	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
 }
 
-void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, char *title)
+//show menu with item highlighting
+//start_item - absolute index of first item to display
+//h_item - item to highlight, relative value: 0..3
+void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, const menu_t menu, const uint8_t start_item, const uint8_t h_item)
 {
     *disp_state = DISP_MENU;
     dispClear(buff, 0);
 
-	setString(buff, 0, 0, &nokia_small_bold, title, 0, ALIGN_CENTER);
+    setString(buff, 0, 0, &nokia_small_bold, (char*)menu.title, 0, ALIGN_CENTER);
 
-    drawRect(buff, 0, 8, RES_X-1, 2*9-1, 0, 1);
-	setString(buff, 1, 1*9, &nokia_small, (char*)"Messaging", 1, ALIGN_ARB);
-	setString(buff, 1, 2*9, &nokia_small, (char*)"RF settings", 0, ALIGN_ARB);
-	setString(buff, 1, 3*9, &nokia_small, (char*)"M17 settings", 0, ALIGN_ARB);
-	setString(buff, 1, 4*9, &nokia_small, (char*)"Misc.", 0, ALIGN_ARB);
+    for(uint8_t i=start_item; i<menu.num_items && i<start_item+4; i++)
+    {
+    	//highlight
+    	if(i==h_item-start_item)
+    		drawRect(buff, 0, 8, RES_X-1, 2*9-1, 0, 1);
+
+    	setString(buff, 1, (i+1)*9, &nokia_small, (char*)menu.item[i], (i==h_item-start_item)?1:0, ALIGN_ARB);
+    	setString(buff, 0, (i+1)*9, &nokia_small, (char*)menu.value[i], (i==h_item-start_item)?1:0, ALIGN_RIGHT);
+    }
 }
 
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
@@ -600,7 +617,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_OK:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				showMenu(buff, disp_state, "Main menu");
+				showMenu(buff, disp_state, main_menu, 0, 0);
 			}
 			else if(*disp_state==DISP_MENU)
 			{
