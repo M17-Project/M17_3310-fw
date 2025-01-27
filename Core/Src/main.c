@@ -319,7 +319,7 @@ char *addCode(char *code, char symbol)
 //hardware
 void setBacklight(uint8_t level)
 {
-	TIM2->CCR3 = (level>255) ? 255 : level; //limiter
+	TIM2->CCR3 = level;
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
 }
 
@@ -1924,8 +1924,20 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 //USB control
 void parseUSB(uint8_t *str, uint32_t len)
 {
+	//display backlight
+	if(strcmp((char*)str, "bl")>0)
+	{
+		setBacklight(atoi(strstr((char*)str, "=")+1));
+	}
+
+	//set frequency
+	/*else if(strcmp((char*)str, "freq")>0)
+	{
+		setFreqRF(atoi(strstr((char*)str, "=")+1));
+	}*/
+
 	//simple echo
-	CDC_Transmit_FS(str, len);
+	//CDC_Transmit_FS(str, len);
 }
 /* USER CODE END 0 */
 
@@ -2020,7 +2032,6 @@ int main(void)
 
 			  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[0][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
 		  }
-
 		  else if(frame_cnt<warmup)
 		  {
 			  //more preamble :D
