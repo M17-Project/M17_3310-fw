@@ -1,9 +1,16 @@
 #MicroXplorer Configuration settings - do not modify
 ADC1.Channel-0\#ChannelRegularConversion=ADC_CHANNEL_0
-ADC1.IPParameters=Rank-0\#ChannelRegularConversion,master,Channel-0\#ChannelRegularConversion,SamplingTime-0\#ChannelRegularConversion,NbrOfConversionFlag
+ADC1.Channel-1\#ChannelRegularConversion=ADC_CHANNEL_1
+ADC1.ContinuousConvMode=ENABLE
+ADC1.DiscontinuousConvMode=DISABLE
+ADC1.ExternalTrigConv=ADC_SOFTWARE_START
+ADC1.IPParameters=Rank-0\#ChannelRegularConversion,master,Channel-0\#ChannelRegularConversion,SamplingTime-0\#ChannelRegularConversion,NbrOfConversionFlag,NbrOfConversion,Rank-1\#ChannelRegularConversion,Channel-1\#ChannelRegularConversion,SamplingTime-1\#ChannelRegularConversion,ContinuousConvMode,DiscontinuousConvMode,ExternalTrigConv
+ADC1.NbrOfConversion=2
 ADC1.NbrOfConversionFlag=1
 ADC1.Rank-0\#ChannelRegularConversion=1
-ADC1.SamplingTime-0\#ChannelRegularConversion=ADC_SAMPLETIME_3CYCLES
+ADC1.Rank-1\#ChannelRegularConversion=2
+ADC1.SamplingTime-0\#ChannelRegularConversion=ADC_SAMPLETIME_15CYCLES
+ADC1.SamplingTime-1\#ChannelRegularConversion=ADC_SAMPLETIME_15CYCLES
 ADC1.master=1
 CAD.formats=
 CAD.pinconfig=
@@ -270,7 +277,7 @@ ProjectManager.ToolChainLocation=
 ProjectManager.UAScriptAfterPath=
 ProjectManager.UAScriptBeforePath=
 ProjectManager.UnderRoot=true
-ProjectManager.functionlistsort=1-SystemClock_Config-RCC-false-HAL-false,2-MX_GPIO_Init-GPIO-false-HAL-true,3-MX_DMA_Init-DMA-false-HAL-true,4-MX_ADC1_Init-ADC1-false-HAL-true,5-MX_DAC_Init-DAC-false-HAL-true,6-MX_RTC_Init-RTC-false-HAL-true,7-MX_TIM1_Init-TIM1-false-HAL-true,8-MX_TIM2_Init-TIM2-false-HAL-true,9-MX_UART4_Init-UART4-false-HAL-true,10-MX_SPI1_Init-SPI1-false-HAL-true,11-MX_TIM7_Init-TIM7-false-HAL-true,12-MX_USB_DEVICE_Init-USB_DEVICE-false-HAL-false,13-MX_TIM6_Init-TIM6-false-HAL-true
+ProjectManager.functionlistsort=1-SystemClock_Config-RCC-false-HAL-false,2-MX_GPIO_Init-GPIO-false-HAL-true,3-MX_DMA_Init-DMA-false-HAL-true,4-MX_ADC1_Init-ADC1-false-HAL-true,5-MX_DAC_Init-DAC-false-HAL-true,6-MX_RTC_Init-RTC-false-HAL-true,7-MX_TIM1_Init-TIM1-false-HAL-true,8-MX_TIM2_Init-TIM2-false-HAL-true,9-MX_UART4_Init-UART4-false-HAL-true,10-MX_SPI1_Init-SPI1-false-HAL-true,11-MX_TIM7_Init-TIM7-false-HAL-true,12-MX_USB_DEVICE_Init-USB_DEVICE-false-HAL-false,13-MX_TIM6_Init-TIM6-false-HAL-true,14-MX_TIM3_Init-TIM3-false-HAL-true
 RCC.48MHZClocksFreq_Value=48000000
 RCC.AHBFreq_Value=168000000
 RCC.APB1CLKDivider=RCC_HCLK_DIV4

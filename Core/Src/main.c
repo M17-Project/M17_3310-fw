@@ -41,6 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define FW_VER					"1.0.0"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -89,7 +90,14 @@ typedef enum disp_state
 	DISP_NONE,
 	DISP_SPLASH,
 	DISP_MAIN_SCR,
-	DISP_MENU,
+	DISP_MAIN_MENU,
+	DISP_SETTINGS,
+	DISP_RADIO_SETTINGS,
+	DISP_DISPLAY_SETTINGS,
+	DISP_KEYBOARD_SETTINGS,
+	DISP_M17_SETTINGS,
+	DISP_INFO,
+	DISP_DEBUG,
     DISP_TEXT_ENTRY
 } disp_state_t;
 
@@ -103,8 +111,18 @@ typedef struct menu
 	char value[32][24];
 } menu_t;
 
-menu_t main_menu = {"Main menu", 3, {"Messaging", "Settings", "Info"}, {}};
+menu_t main_menu = {"Main menu", 4, {"Messaging", "Settings", "Info", "Debug"}, {}};
+menu_t settings_menu = {"Settings", 4, {"Radio", "Display", "Keyboard", "M17"}, {}};
+menu_t radio_settings = {"Radio settings", 1, {"Power"}, {"0.5W"}};
+menu_t display_settings = {"Display settings", 1, {"Backlight"}, {"255"}};
+menu_t keyboard_settings = {"Keyboard settings", 3, {"Timeout", "Delay", "Vibration"}, {"750", "150", "OFF"}};
+menu_t m17_settings = {"M17 settings", 3, {"Callsign", "Dest.", "CAN"}, {"N0KIA", "@ALL", "0"}};
+menu_t info_menu = {"Info", 2, {"Version", "Author"}, {FW_VER, "SP5WWP"}};
+menu_t debug_menu = {"Debug menu", 1, {"Empty"}, {}};
 
+uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
+
+//keys
 typedef enum key
 {
 	KEY_NONE,
@@ -126,6 +144,7 @@ typedef enum key
 	KEY_HASH
 } key_t;
 
+//settings
 typedef enum ch_bw
 {
 	RF_BW_12K5,
@@ -225,6 +244,7 @@ static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 void setRF(radio_state_t state);
+void setFreqRF(uint32_t freq);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -254,6 +274,38 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 	{
 		HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[frame_cnt%2][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
 	}
+}
+
+//ADC
+void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
+{
+	ADC_ChannelConfTypeDef sConfig = {0};
+	sConfig.Channel = channel;
+	sConfig.Rank = 1;
+	sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+	if(HAL_ADC_ConfigChannel(hadc, &sConfig)!=HAL_OK)
+	{
+		Error_Handler();
+	}
+}
+
+uint16_t getBattVoltage(void)
+{
+	ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_1);
+	HAL_ADC_Start(&hadc1);
+	while(HAL_ADC_PollForConversion(&hadc1, 5)!=HAL_OK);
+
+	return (ADC1->DR)/4095.0f * 3300.0f * 2.0f;
+}
+
+//get baseband sample - debug
+uint16_t getBasebandSample(void)
+{
+	ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_0);
+	HAL_ADC_Start(&hadc1);
+	while(HAL_ADC_PollForConversion(&hadc1, 0)!=HAL_OK);
+
+	return (ADC1->DR)/4095.0f * 3300.0f;
 }
 
 //T9 related
@@ -477,9 +529,16 @@ void showMainScreen(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state)
 
 	//is the battery charging? (read /CHG signal)
 	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
+	{
 		setString(buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display
+	}
 	else
-		setString(buff, RES_X-1, 0, &nokia_small, "B+", 1, ALIGN_RIGHT); //clear
+	{
+		char u_batt_str[8];
+		uint16_t u_batt=getBattVoltage();
+		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
+		setString(buff, RES_X-1, 0, &nokia_small, u_batt_str, 1, ALIGN_RIGHT); //clear
+	}
 }
 
 void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *callsign)
@@ -514,21 +573,21 @@ void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_e
 //show menu with item highlighting
 //start_item - absolute index of first item to display
 //h_item - item to highlight, relative value: 0..3
-void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, const menu_t menu, const uint8_t start_item, const uint8_t h_item)
+void showMenu(uint8_t buff[DISP_BUFF_SIZ], const menu_t menu, const uint8_t start_item, const uint8_t h_item)
 {
-    *disp_state = DISP_MENU;
     dispClear(buff, 0);
 
     setString(buff, 0, 0, &nokia_small_bold, (char*)menu.title, 0, ALIGN_CENTER);
 
-    for(uint8_t i=start_item; i<menu.num_items && i<start_item+4; i++)
+    for(uint8_t i=0; i<start_item+menu.num_items && i<4; i++)
     {
     	//highlight
-    	if(i==h_item-start_item)
-    		drawRect(buff, 0, 8, RES_X-1, 2*9-1, 0, 1);
+    	if(i==h_item)
+    		drawRect(buff, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
 
-    	setString(buff, 1, (i+1)*9, &nokia_small, (char*)menu.item[i], (i==h_item-start_item)?1:0, ALIGN_ARB);
-    	setString(buff, 0, (i+1)*9, &nokia_small, (char*)menu.value[i], (i==h_item-start_item)?1:0, ALIGN_RIGHT);
+    	setString(buff, 1, (i+1)*9, &nokia_small, (char*)menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
+    	if(menu.value[i+start_item][0]!=0)
+    		setString(buff, 0, (i+1)*9, &nokia_small, (char*)menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
     }
 }
 
@@ -610,23 +669,52 @@ key_t scanKeys(uint8_t rep)
 	return key;
 }
 
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, key_t key)
+void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings, key_t key)
 {
 	switch(key)
 	{
 		case KEY_OK:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				showMenu(buff, disp_state, main_menu, 0, 0);
+				menu_pos=0;
+				menu_pos_hl=0;
+				*disp_state = DISP_MAIN_MENU;
+				showMenu(buff, main_menu, 0, 0);
 			}
-			else if(*disp_state==DISP_MENU)
+			else if(*disp_state==DISP_MAIN_MENU)
 			{
-				//clear message and display text entry screen
-				memset(message, 0, strlen(message));
-				showTextEntry(buff, disp_state, *text_mode);
+				//find out where to go next
+				uint8_t item=menu_pos+menu_pos_hl;
+
+				if(item==0) //"Messaging"
+				{
+					//clear message and display text entry screen
+					*disp_state = DISP_TEXT_ENTRY;
+					memset(message, 0, strlen(message));
+					showTextEntry(buff, disp_state, *text_mode);
+				}
+				else if(item==1) //"Settings"
+				{
+					menu_pos=0;
+					menu_pos_hl=0;
+					*disp_state = DISP_SETTINGS;
+					showMenu(buff, settings_menu, 0, 0);
+				}
+				else if(item==2) //"Info"
+				{
+					menu_pos=0;
+					menu_pos_hl=0;
+					*disp_state = DISP_INFO;
+					showMenu(buff, info_menu, 0, 0);
+				}
+				else if(item==3) //"Debug"
+				{
+					; //nothing
+				}
 			}
 			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
+				//initialize packet transmission
 				if(*radio_state==RF_RX)
 				{
 					uint16_t msg_len = strlen(message);
@@ -655,14 +743,15 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_C:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				;
+				; //nothing
 			}
-			else if(*disp_state==DISP_MENU)
+			else if(*disp_state==DISP_MAIN_MENU)
 			{
 				showMainScreen(buff, disp_state);
 		    }
 			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
+				//backspace
 				if(strlen(message)>0)
 				{
 					memset(&message[strlen(message)-1], 0, sizeof(message)-strlen(message));
@@ -673,20 +762,187 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 				}
 			}
+			else if(*disp_state==DISP_SETTINGS)
+			{
+				menu_pos=0;
+				menu_pos_hl=0;
+				*disp_state = DISP_MAIN_MENU;
+				showMenu(buff, main_menu, 0, 0);
+			}
+			else if(*disp_state==DISP_INFO)
+			{
+				menu_pos=0;
+				menu_pos_hl=0;
+				*disp_state = DISP_MAIN_MENU;
+				showMenu(buff, main_menu, 0, 0);
+			}
+			else if(*disp_state==DISP_DEBUG)
+			{
+				menu_pos=0;
+				menu_pos_hl=0;
+				*disp_state = DISP_MAIN_MENU;
+				showMenu(buff, main_menu, 0, 0);
+			}
 		break;
 
 		case KEY_LEFT:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_MAIN_SCR)
+			{
+				//TODO: if in free-tuning mode
+				dev_settings->tx_frequency -= 12500;
+				setFreqRF(dev_settings->tx_frequency);
+
+				char str[24];
+				sprintf(str, "T %ld.%04ld",
+						dev_settings->tx_frequency/1000000,
+						(dev_settings->tx_frequency - (dev_settings->tx_frequency/1000000)*1000000)/100);
+				drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
+				setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+			}
+			else if(*disp_state==DISP_MAIN_MENU)
+			{
+				if(menu_pos_hl==3)
+				{
+					if(menu_pos+3<main_menu.num_items-1)
+						menu_pos++;
+				}
+				else
+				{
+					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<main_menu.num_items-1)
+						menu_pos_hl++;
+				}
+				//no state change
+				showMenu(buff, main_menu, menu_pos, menu_pos_hl);
+			}
+			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
 				;
+			}
+			else if(*disp_state==DISP_SETTINGS)
+			{
+				if(menu_pos_hl==3)
+				{
+					if(menu_pos+3<settings_menu.num_items-1)
+						menu_pos++;
+				}
+				else
+				{
+					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<settings_menu.num_items-1)
+						menu_pos_hl++;
+				}
+				//no state change
+				showMenu(buff, settings_menu, menu_pos, menu_pos_hl);
+			}
+			else if(*disp_state==DISP_INFO)
+			{
+				if(menu_pos_hl==3)
+				{
+					if(menu_pos+3<info_menu.num_items-1)
+						menu_pos++;
+				}
+				else
+				{
+					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<info_menu.num_items-1)
+						menu_pos_hl++;
+				}
+				//no state change
+				showMenu(buff, info_menu, menu_pos, menu_pos_hl);
+			}
+			else if(*disp_state==DISP_DEBUG)
+			{
+				if(menu_pos_hl==3)
+				{
+					if(menu_pos+3<debug_menu.num_items-1)
+						menu_pos++;
+				}
+				else
+				{
+					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<debug_menu.num_items-1)
+						menu_pos_hl++;
+				}
+				//no state change
+				showMenu(buff, debug_menu, menu_pos, menu_pos_hl);
 			}
 		break;
 
 		case KEY_RIGHT:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_MAIN_SCR)
+			{
+				//TODO: if in free-tuning mode
+				dev_settings->tx_frequency += 12500;
+				setFreqRF(dev_settings->tx_frequency);
+
+				char str[24];
+				sprintf(str, "T %ld.%04ld",
+						dev_settings->tx_frequency/1000000,
+						(dev_settings->tx_frequency - (dev_settings->tx_frequency/1000000)*1000000)/100);
+				drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
+				setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+			}
+			else if(*disp_state==DISP_MAIN_MENU)
+			{
+				if(menu_pos_hl==0)
+				{
+					if(menu_pos>0)
+						menu_pos--;
+				}
+				else
+				{
+					if(menu_pos_hl>0)
+						menu_pos_hl--;
+				}
+				//no state change
+				showMenu(buff, main_menu, menu_pos, menu_pos_hl);
+			}
+			else if(*disp_state==DISP_TEXT_ENTRY)
 			{
 				pos=strlen(message);
 				memset((char*)code, 0, strlen((char*)code));
+			}
+			else if(*disp_state==DISP_SETTINGS)
+			{
+				if(menu_pos_hl==0)
+				{
+					if(menu_pos>0)
+						menu_pos--;
+				}
+				else
+				{
+					if(menu_pos_hl>0)
+						menu_pos_hl--;
+				}
+				//no state change
+				showMenu(buff, settings_menu, menu_pos, menu_pos_hl);
+			}
+			else if(*disp_state==DISP_INFO)
+			{
+				if(menu_pos_hl==0)
+				{
+					if(menu_pos>0)
+						menu_pos--;
+				}
+				else
+				{
+					if(menu_pos_hl>0)
+						menu_pos_hl--;
+				}
+				//no state change
+				showMenu(buff, info_menu, menu_pos, menu_pos_hl);
+			}
+			else if(*disp_state==DISP_DEBUG)
+			{
+				if(menu_pos_hl==0)
+				{
+					if(menu_pos>0)
+						menu_pos--;
+				}
+				else
+				{
+					if(menu_pos_hl>0)
+						menu_pos_hl--;
+				}
+				//no state change
+				showMenu(buff, debug_menu, menu_pos, menu_pos_hl);
 			}
 		break;
 
@@ -1616,9 +1872,9 @@ void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode, rf_power_t pwr)
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	chBwRF(bw);
 
-	//deviation control - gains
-	setRegRF(0x41, 0x0070); //"Voice digital gain", was 0x0070
-	setRegRF(0x44, 0x0022); //"Voice digital gain after tx ADC down sample", was 0x0022
+	//some additional registers
+	setRegRF(0x41, 0x0070); //VOX threshold? was 0x0070
+	setRegRF(0x44, 0x00FF); //"RX voice volume", was 0x0022
 
 	//set frequency
 	sprintf(msg, "[RF module] Setting frequency to %ldHz\n", freq);
@@ -1663,6 +1919,13 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 			out[i*10+j]=DAC_IDLE+acc*250.0f;
 		}
 	}
+}
+
+//USB control
+void parseUSB(uint8_t *str, uint32_t len)
+{
+	//simple echo
+	CDC_Transmit_FS(str, len);
 }
 /* USER CODE END 0 */
 
@@ -1711,12 +1974,10 @@ int main(void)
   	  SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
   #endif
 
-  radio_state = RF_RX;
-
   //set baseband DAC to idle
   frame_samples[0][0]=DAC_IDLE;
   HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
-  HAL_TIM_Base_Start(&htim6);
+  HAL_TIM_Base_Start(&htim6); //48kHz
 
   HAL_Delay(200);
 
@@ -1725,7 +1986,10 @@ int main(void)
   setBacklight(0);
 
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
+
+  radio_state = RF_RX;
   initRF(dev_settings.tx_frequency, dev_settings.ch_bw, dev_settings.mode, dev_settings.rf_pwr);
+  setRF(radio_state);
   set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
   //playBeep(50);
@@ -1737,7 +2001,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  handleKey(disp_buff, &disp_state, &text_mode, &radio_state, scanKeys(dev_settings.kbd_delay));
+	  handleKey(disp_buff, &disp_state, &text_mode, &radio_state, &dev_settings, scanKeys(dev_settings.kbd_delay));
 
 	  if(frame_pend)
 	  {
@@ -1766,7 +2030,7 @@ int main(void)
 		  }
 		  else if(frame_cnt==warmup)
 		  {
-			  //LSF
+			  //LSF with sample META field
 			  lsf.meta[0]=0xDE; lsf.meta[1]=0xAD;
 			  lsf.meta[2]=0xBE; lsf.meta[3]=0xEF;
 			  update_LSF_CRC(&lsf);
@@ -1807,39 +2071,7 @@ int main(void)
 
 	  if(usb_drdy)
 	  {
-		  if(usb_rx[0]=='a')
-			  setBacklight(atoi((char*)&usb_rx[1]));
-		  else if(usb_rx[0]=='b')
-			  playBeep(atoi((char*)&usb_rx[1]));
-		  else if(usb_rx[0]=='c')
-		  {
-			  ;
-		  }
-		  else if(usb_rx[0]=='d')
-		  {
-			  char msg[128];
-			  sprintf(msg, "[RF module] PTT on\n");
-			  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-			  radio_state = RF_TX;
-			  setRF(radio_state);
-		  }
-		  else if(usb_rx[0]=='e')
-		  {
-			  char msg[128];
-			  sprintf(msg, "[RF module] PTT off\n");
-			  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-			  radio_state = RF_RX;
-			  setRF(radio_state);
-		  }
-		  else if(usb_rx[0]=='f')
-		  {
-			  ;
-		  }
-		  else if(usb_rx[0]=='g')
-		  {
-			  setRegRF(0x59, (atoi((char*)&usb_rx[1])<<6) | 0x10);
-		  }
-
+		  parseUSB(usb_rx, usb_len);
 		  usb_drdy=0;
 	  }
     /* USER CODE END WHILE */
@@ -1918,13 +2150,13 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.NbrOfConversion = 2;
   hadc1.Init.DMAContinuousRequests = DISABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
@@ -1936,7 +2168,16 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_1;
+  sConfig.Rank = 2;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
