@@ -85,41 +85,10 @@ typedef enum text_entry
 
 text_entry_t text_mode = TEXT_NORM;
 
-typedef enum disp_state
-{
-	DISP_NONE,
-	DISP_SPLASH,
-	DISP_MAIN_SCR,
-	DISP_MAIN_MENU,
-	DISP_SETTINGS,
-	DISP_RADIO_SETTINGS,
-	DISP_DISPLAY_SETTINGS,
-	DISP_KEYBOARD_SETTINGS,
-	DISP_M17_SETTINGS,
-	DISP_INFO,
-	DISP_DEBUG,
-    DISP_TEXT_ENTRY
-} disp_state_t;
-
+//menus state machine
+#include "menus.h"
 disp_state_t disp_state = DISP_NONE;
-
-typedef struct menu
-{
-	char title[24];
-	uint8_t num_items;
-	char item[32][24]; //32 entries max, 24 chars per item
-	char value[32][24];
-} menu_t;
-
-menu_t main_menu = {"Main menu", 4, {"Messaging", "Settings", "Info", "Debug"}, {}};
-menu_t settings_menu = {"Settings", 4, {"Radio", "Display", "Keyboard", "M17"}, {}};
-menu_t radio_settings = {"Radio settings", 1, {"Power"}, {"0.5W"}};
-menu_t display_settings = {"Display settings", 1, {"Backlight"}, {"255"}};
-menu_t keyboard_settings = {"Keyboard settings", 3, {"Timeout", "Delay", "Vibration"}, {"750", "150", "OFF"}};
-menu_t m17_settings = {"M17 settings", 3, {"Callsign", "Dest.", "CAN"}, {"N0KIA", "@ALL", "0"}};
-menu_t info_menu = {"Info", 2, {"Version", "Author"}, {FW_VER, "SP5WWP"}};
-menu_t debug_menu = {"Debug menu", 1, {"Empty"}, {}};
-
+menu_t *menu;
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
 
 //keys
@@ -197,7 +166,7 @@ dev_settings_t dev_settings =
 	"N0KIA",
 	{"OpenRTX", "rulez"},
 
-	255,
+	160,
 	750,
 	150,
 
@@ -506,11 +475,10 @@ void drawRect(uint8_t buff[DISP_BUFF_SIZ], uint8_t x0, uint8_t y0, uint8_t x1, u
 	dispRefresh(buff);
 }
 
-void showMainScreen(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state)
+void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
 {
 	char str[24];
 
-	*disp_state = DISP_MAIN_SCR;
 	dispClear(buff, 0);
 
 	setString(buff, 0, 0, &nokia_small, dev_settings.str_mode, 0, ALIGN_LEFT);
@@ -557,9 +525,8 @@ void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *cal
 	}
 }
 
-void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t text_mode)
+void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
 {
-	*disp_state = DISP_TEXT_ENTRY;
 	dispClear(buff, 0);
 
     if(text_mode==TEXT_T9)
@@ -676,43 +643,39 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_OK:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				menu_pos=0;
-				menu_pos_hl=0;
-				*disp_state = DISP_MAIN_MENU;
-				showMenu(buff, main_menu, 0, 0);
+				*disp_state = menu->next_state[0];
+				menu_pos=menu_pos_hl=0;
+				showMenu(buff, *((menu_t*)menu->next_menu[0]), 0, 0);
+				menu = (menu_t*)menu->next_menu[0];
 			}
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
 				//find out where to go next
 				uint8_t item=menu_pos+menu_pos_hl;
 
+				if(menu->next_state[item] != DISP_NONE)
+					*disp_state = menu->next_state[item];
+
 				if(item==0) //"Messaging"
 				{
 					//clear message and display text entry screen
-					*disp_state = DISP_TEXT_ENTRY;
 					memset(message, 0, strlen(message));
-					showTextEntry(buff, disp_state, *text_mode);
+					*disp_state = menu->next_state[0];
+					showTextEntry(buff, *text_mode);
+					menu = (menu_t*)menu->next_menu[0];
 				}
-				else if(item==1) //"Settings"
+				else
 				{
-					menu_pos=0;
-					menu_pos_hl=0;
-					*disp_state = DISP_SETTINGS;
-					showMenu(buff, settings_menu, 0, 0);
-				}
-				else if(item==2) //"Info"
-				{
-					menu_pos=0;
-					menu_pos_hl=0;
-					*disp_state = DISP_INFO;
-					showMenu(buff, info_menu, 0, 0);
-				}
-				else if(item==3) //"Debug"
-				{
-					; //nothing
+					if((menu_t*)menu->next_menu[item] != NULL)
+					{
+						menu_pos=menu_pos_hl=0;
+						*disp_state = menu->next_state[item];
+						showMenu(buff, *((menu_t*)menu->next_menu[item]), 0, 0);
+						menu = (menu_t*)menu->next_menu[item];
+					}
 				}
 			}
-			else if(*disp_state==DISP_TEXT_ENTRY)
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				//initialize packet transmission
 				if(*radio_state==RF_RX)
@@ -741,15 +704,19 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_C:
+			menu_pos=menu_pos_hl=0;
+
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				; //nothing
 			}
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
-				showMainScreen(buff, disp_state);
+				*disp_state = menu->prev_state;
+				showMainScreen(buff);
+				menu = (menu_t*)menu->prev_menu;
 		    }
-			else if(*disp_state==DISP_TEXT_ENTRY)
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				//backspace
 				if(strlen(message)>0)
@@ -764,24 +731,21 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			}
 			else if(*disp_state==DISP_SETTINGS)
 			{
-				menu_pos=0;
-				menu_pos_hl=0;
-				*disp_state = DISP_MAIN_MENU;
-				showMenu(buff, main_menu, 0, 0);
+				*disp_state = menu->prev_state;
+				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
+				menu = (menu_t*)menu->prev_menu;
 			}
 			else if(*disp_state==DISP_INFO)
 			{
-				menu_pos=0;
-				menu_pos_hl=0;
-				*disp_state = DISP_MAIN_MENU;
-				showMenu(buff, main_menu, 0, 0);
+				*disp_state = menu->prev_state;
+				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
+				menu = (menu_t*)menu->prev_menu;
 			}
 			else if(*disp_state==DISP_DEBUG)
 			{
-				menu_pos=0;
-				menu_pos_hl=0;
-				*disp_state = DISP_MAIN_MENU;
-				showMenu(buff, main_menu, 0, 0);
+				*disp_state = menu->prev_state;
+				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
+				menu = (menu_t*)menu->prev_menu;
 			}
 		break;
 
@@ -814,7 +778,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				//no state change
 				showMenu(buff, main_menu, menu_pos, menu_pos_hl);
 			}
-			else if(*disp_state==DISP_TEXT_ENTRY)
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				;
 			}
@@ -894,7 +858,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				//no state change
 				showMenu(buff, main_menu, menu_pos, menu_pos_hl);
 			}
-			else if(*disp_state==DISP_TEXT_ENTRY)
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				pos=strlen(message);
 				memset((char*)code, 0, strlen((char*)code));
@@ -947,7 +911,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_1:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				HAL_TIM_Base_Stop(&htim7);
 				pos=strlen(message);
@@ -986,7 +950,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_2:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1047,7 +1011,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_3:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1108,7 +1072,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_4:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1169,7 +1133,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_5:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1230,7 +1194,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_6:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1291,7 +1255,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_7:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1356,7 +1320,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_8:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1417,7 +1381,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_9:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1482,7 +1446,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_ASTERISK:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 				{
@@ -1531,7 +1495,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_0:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				HAL_TIM_Base_Stop(&htim7);
 				pos=strlen(message);
@@ -1574,7 +1538,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_HASH:
-			if(*disp_state==DISP_TEXT_ENTRY)
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				if(*text_mode==TEXT_T9)
 					*text_mode = TEXT_NORM;
@@ -2006,7 +1970,10 @@ int main(void)
   setKeysTimeout(dev_settings.kbd_timeout);
   //playBeep(50);
 
-  showMainScreen(disp_buff, &disp_state);
+  //menu init
+  menu = &main_scr;
+  disp_state = DISP_MAIN_SCR;
+  showMainScreen(disp_buff);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -2023,7 +1990,7 @@ int main(void)
 		  if(frame_cnt==0)
 		  {
 			  dispClear(disp_buff, 0);
-			  setString(disp_buff, 0, 12, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+			  setString(disp_buff, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
 
 			  //preamble
 			  uint32_t cnt=0;
@@ -2074,7 +2041,9 @@ int main(void)
 			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
 			  frame_cnt=0;
 
-			  showMainScreen(disp_buff, &disp_state);
+			  disp_state = DISP_MAIN_SCR;
+			  showMainScreen(disp_buff);
+			  menu = &main_scr;
 		  }
 
 		  frame_pend=0;
