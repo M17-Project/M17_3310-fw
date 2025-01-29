@@ -46,6 +46,7 @@
 #define RES_X					84
 #define RES_Y					48
 #define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
+#define MEM_START				(0xF8000U) //upper 32kB
 
 #define FIX_TIMER_TRIGGER(handle_ptr) (__HAL_TIM_CLEAR_FLAG(handle_ptr, TIM_SR_UIF))
 /* USER CODE END PD */
@@ -142,7 +143,35 @@ uint8_t usb_rx[APP_RX_DATA_SIZE];
 uint32_t usb_len;
 uint8_t usb_drdy;
 
-//settings (volatile!)
+//settings
+typedef struct ch_settings
+{
+	rf_mode_t mode;
+	char str_mode[6];
+	ch_bw_t ch_bw;
+	rf_power_t rf_pwr;
+	char ch_name[24];
+	uint32_t rx_frequency;
+	uint32_t tx_frequency;
+} ch_settings_t;
+
+const ch_settings_t def_channel =
+{
+	RF_MODE_4FSK,
+	"M17",
+	RF_BW_12K5,
+	RF_PWR_LOW,
+	"M17 IARU R1",
+	433475000,
+	433475000
+};
+
+typedef struct codeplug
+{
+	char name[64];
+	ch_settings_t channel[128];
+} codeplug_t;
+
 typedef struct dev_settings
 {
 	char callsign[12];
@@ -152,13 +181,8 @@ typedef struct dev_settings
 	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
 	uint16_t kbd_delay; //insensitivity delay after keypress detection
 
-	rf_mode_t mode;
-	char str_mode[6];
-	ch_bw_t ch_bw;
-	rf_power_t rf_pwr;
-	char ch_name[24];
-	uint32_t rx_frequency;
-	uint32_t tx_frequency;
+	ch_settings_t channel;
+	uint16_t ch_num;
 } dev_settings_t;
 
 dev_settings_t dev_settings =
@@ -170,13 +194,8 @@ dev_settings_t dev_settings =
 	750,
 	150,
 
-	RF_MODE_4FSK,
-	"M17",
-	RF_BW_12K5,
-	RF_PWR_LOW,
-	"M17 IARU R1",
-	433475000,
-	433475000
+	def_channel,
+	0
 };
 
 //M17
@@ -481,18 +500,18 @@ void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
 
 	dispClear(buff, 0);
 
-	setString(buff, 0, 0, &nokia_small, dev_settings.str_mode, 0, ALIGN_LEFT);
+	setString(buff, 0, 0, &nokia_small, dev_settings.channel.str_mode, 0, ALIGN_LEFT);
 
-	setString(buff, 0, 12, &nokia_big, dev_settings.ch_name, 0, ALIGN_CENTER);
+	setString(buff, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
 
 	sprintf(str, "R %ld.%04ld",
-			dev_settings.rx_frequency/1000000,
-			(dev_settings.rx_frequency - (dev_settings.rx_frequency/1000000)*1000000)/100);
+			dev_settings.channel.rx_frequency/1000000,
+			(dev_settings.channel.rx_frequency - (dev_settings.channel.rx_frequency/1000000)*1000000)/100);
 	setString(buff, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
 
 	sprintf(str, "T %ld.%04ld",
-			dev_settings.tx_frequency/1000000,
-			(dev_settings.tx_frequency - (dev_settings.tx_frequency/1000000)*1000000)/100);
+			dev_settings.channel.tx_frequency/1000000,
+			(dev_settings.channel.tx_frequency - (dev_settings.channel.tx_frequency/1000000)*1000000)/100);
 	setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 
 	//is the battery charging? (read /CHG signal)
@@ -753,13 +772,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				//TODO: if in free-tuning mode
-				dev_settings->tx_frequency -= 12500;
-				setFreqRF(dev_settings->tx_frequency);
+				dev_settings->channel.tx_frequency -= 12500;
+				setFreqRF(dev_settings->channel.tx_frequency);
 
 				char str[24];
 				sprintf(str, "T %ld.%04ld",
-						dev_settings->tx_frequency/1000000,
-						(dev_settings->tx_frequency - (dev_settings->tx_frequency/1000000)*1000000)/100);
+						dev_settings->channel.tx_frequency/1000000,
+						(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
 				drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
 				setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 			}
@@ -833,13 +852,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				//TODO: if in free-tuning mode
-				dev_settings->tx_frequency += 12500;
-				setFreqRF(dev_settings->tx_frequency);
+				dev_settings->channel.tx_frequency += 12500;
+				setFreqRF(dev_settings->channel.tx_frequency);
 
 				char str[24];
 				sprintf(str, "T %ld.%04ld",
-						dev_settings->tx_frequency/1000000,
-						(dev_settings->tx_frequency - (dev_settings->tx_frequency/1000000)*1000000)/100);
+						dev_settings->channel.tx_frequency/1000000,
+						(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
 				drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
 				setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 			}
@@ -1721,8 +1740,13 @@ void setModeRF(rf_mode_t mode)
 	reloadRF(); //reload
 }
 
-void initRF(uint32_t freq, ch_bw_t bw, rf_mode_t mode, rf_power_t pwr)
+void initRF(ch_settings_t ch_settings)
 {
+	uint32_t freq = ch_settings.rx_frequency;
+	ch_bw_t bw = ch_settings.ch_bw;
+	rf_mode_t mode = ch_settings.mode;
+	rf_power_t pwr = ch_settings.rf_pwr;
+
 	char msg[128]; //debug
 	uint8_t data[64]={0};
 
@@ -1889,16 +1913,47 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 void parseUSB(uint8_t *str, uint32_t len)
 {
 	//display backlight
-	if(strcmp((char*)str, "bl")>0)
+	//"bl=VALUE"
+	if(strstr((char*)str, "bl")==(char*)str)
 	{
 		setBacklight(atoi(strstr((char*)str, "=")+1));
 	}
 
 	//set frequency
-	/*else if(strcmp((char*)str, "freq")>0)
+	//"freq=VALUE"
+	else if(strstr((char*)str, "freq")==(char*)str)
 	{
 		setFreqRF(atoi(strstr((char*)str, "=")+1));
-	}*/
+	}
+
+	//"peek=ADDRESS"
+	else if(strstr((char*)str, "peek")==(char*)str)
+	{
+		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
+		char msg[128];
+		sprintf(msg, "%08lX: %02X\n", addr, *((uint8_t*)addr));
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	}
+
+	//"poke=ADDRESS val=VALUE"
+	else if(strstr((char*)str, "poke")==(char*)str)
+	{
+		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
+		uint8_t val = atoi(strstr((char*)str, "val=")+4);
+
+		if(HAL_FLASH_Unlock()==HAL_OK)
+		{
+			char msg[128];
+			sprintf(msg, "[NVMEM] Writing to memory at address %08lX\n", addr);
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr, (uint64_t)val);
+			HAL_FLASH_Lock();
+		}
+		else
+		{
+			CDC_Transmit_FS((uint8_t*)"[NVMEM] Error unlocking memory\n", 31);
+		}
+	}
 
 	//simple echo
 	//CDC_Transmit_FS(str, len);
@@ -1964,7 +2019,7 @@ int main(void)
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
 
   radio_state = RF_RX;
-  initRF(dev_settings.tx_frequency, dev_settings.ch_bw, dev_settings.mode, dev_settings.rf_pwr);
+  initRF(dev_settings.channel);
   setRF(radio_state);
   set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
@@ -2043,7 +2098,6 @@ int main(void)
 
 			  disp_state = DISP_MAIN_SCR;
 			  showMainScreen(disp_buff);
-			  menu = &main_scr;
 		  }
 
 		  frame_pend=0;

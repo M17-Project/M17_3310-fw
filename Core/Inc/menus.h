@@ -61,7 +61,7 @@ menu_t main_menu =
 	{"Messaging", "Settings", "Info", "Debug"},
 	{},
 	{DISP_TEXT_MSG_ENTRY, DISP_SETTINGS, DISP_INFO, DISP_DEBUG},
-	{NULL, &settings_menu, &info_menu, &debug_menu},
+	{&main_scr, &settings_menu, &info_menu, &debug_menu},
 
 	DISP_MAIN_SCR,
 	&main_scr
