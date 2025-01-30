@@ -194,6 +194,8 @@ typedef struct dev_settings
 	tuning_mode_t tuning_mode;
 	ch_settings_t channel;
 	uint16_t ch_num;
+
+	char refl_name[];
 } dev_settings_t;
 
 dev_settings_t def_dev_settings =
@@ -208,7 +210,9 @@ dev_settings_t def_dev_settings =
 
 	TUNING_VFO,
 	def_channel,
-	0
+	0,
+
+	"M17-M17 C"
 };
 
 dev_settings_t dev_settings;
@@ -2251,8 +2255,8 @@ int main(void)
 		  else if(frame_cnt==warmup)
 		  {
 			  //LSF with sample META field
-			  lsf.meta[0]=0xDE; lsf.meta[1]=0xAD;
-			  lsf.meta[2]=0xBE; lsf.meta[3]=0xEF;
+			  encode_callsign_bytes(&lsf.meta[0], (uint8_t*)dev_settings.refl_name);
+			  //encode_callsign_bytes(&lsf.meta[6], (uint8_t*)"");
 			  update_LSF_CRC(&lsf);
 			  gen_frame_i8(frame_symbols, lsf.meta, FRAME_LSF, &lsf, 0, 0);
 			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
