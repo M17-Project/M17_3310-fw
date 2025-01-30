@@ -136,7 +136,7 @@ typedef enum rf_power
 
 //T9 related variables
 volatile char code[15]="";
-char message[128]="";
+char message[256]="";
 volatile uint8_t pos=0;
 
 //usb-related
@@ -189,6 +189,7 @@ typedef struct dev_settings
 	uint8_t backlight;
 	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
 	uint16_t kbd_delay; //insensitivity delay after keypress detection
+	float freq_corr;
 
 	tuning_mode_t tuning_mode;
 	ch_settings_t channel;
@@ -203,6 +204,7 @@ dev_settings_t def_dev_settings =
 	160,
 	750,
 	150,
+	0.0f,
 
 	TUNING_VFO,
 	def_channel,
@@ -245,7 +247,7 @@ static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 void setRF(radio_state_t state);
-void setFreqRF(uint32_t freq);
+void setFreqRF(uint32_t freq, float corr);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -591,6 +593,28 @@ void showMenu(uint8_t buff[DISP_BUFF_SIZ], const menu_t menu, const uint8_t star
     }
 }
 
+//messaging - initialize text packet transmission
+//note: some variables inside this function are global
+void initTextTX(const char *message)
+{
+	uint16_t msg_len = strlen(message);
+
+	packet_payload[0]=0x05; //packet type: SMS
+
+	strcpy((char*)&packet_payload[1], message);
+
+	uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
+	packet_payload[msg_len+2] = crc>>8;
+	packet_payload[msg_len+3] = crc&0xFF;
+
+	packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
+
+	radio_state = RF_TX;
+	setRF(radio_state);
+	frame_cnt=0;
+	frame_pend=1;
+}
+
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
 key_t scanKeys(uint8_t rep)
 {
@@ -713,21 +737,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				//initialize packet transmission
 				if(*radio_state==RF_RX)
 				{
-					uint16_t msg_len = strlen(message);
-
-					memset(packet_payload, 0, sizeof(packet_payload));
-					packet_payload[0]=0x05; //packet type: SMS
-					memcpy(&packet_payload[1], message, msg_len);
-					uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
-					packet_payload[msg_len+2] = crc>>8;
-					packet_payload[msg_len+3] = crc&0xFF;
-
-					packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
-
-					*radio_state = RF_TX;
-					setRF(*radio_state);
-					frame_cnt=0;
-					frame_pend=1;
+					initTextTX(message);
 				}
 			}
 			else
@@ -788,7 +798,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				if(dev_settings->tuning_mode==TUNING_VFO)
 				{
 					dev_settings->channel.tx_frequency -= 12500;
-					setFreqRF(dev_settings->channel.tx_frequency);
+					setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
 
 					char str[24];
 					sprintf(str, "T %ld.%04ld",
@@ -874,7 +884,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				if(dev_settings->tuning_mode==TUNING_VFO)
 				{
 					dev_settings->channel.tx_frequency += 12500;
-					setFreqRF(dev_settings->channel.tx_frequency);
+					setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
 
 					char str[24];
 					sprintf(str, "T %ld.%04ld",
@@ -1657,8 +1667,10 @@ void reloadRF(void)
 	maskSetRegRF(0x30, 0x0060, funcMode); //Restore op. status
 }
 
-void setFreqRF(uint32_t freq)
+void setFreqRF(uint32_t freq, const float corr)
 {
+	freq = (float)freq * (1.0f + corr/1e6);
+
 	uint32_t val = (freq / 1000.0f) * 16.0f;
 	uint16_t fHi = (val >> 16) & 0xFFFF;
 	uint16_t fLo = val & 0xFFFF;
@@ -1769,6 +1781,7 @@ void setModeRF(rf_mode_t mode)
 void initRF(ch_settings_t ch_settings)
 {
 	uint32_t freq = ch_settings.rx_frequency;
+	float freq_corr = dev_settings.freq_corr;
 	ch_bw_t bw = ch_settings.ch_bw;
 	rf_mode_t mode = ch_settings.mode;
 	rf_power_t pwr = ch_settings.rf_pwr;
@@ -1891,9 +1904,10 @@ void initRF(ch_settings_t ch_settings)
 	setRegRF(0x44, 0x00FF); //"RX voice volume", was 0x0022
 
 	//set frequency
-	sprintf(msg, "[RF module] Setting frequency to %ldHz\n", freq);
+	sprintf(msg, "[RF module] Setting frequency to %ldHz (f_corr=%d.%d)\n",
+			freq, (int8_t)freq_corr, (uint8_t)fabsf(10*freq_corr) - (int8_t)fabsf((int8_t)freq_corr*10.0f));
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-	setFreqRF(freq);
+	setFreqRF(freq, freq_corr);
 }
 
 void shutdownRF(void)
@@ -2048,7 +2062,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//"freq=VALUE"
 	else if(strstr((char*)str, "freq")==(char*)str)
 	{
-		setFreqRF(atoi(strstr((char*)str, "=")+1));
+		setFreqRF(atoi(strstr((char*)str, "=")+1), dev_settings.freq_corr);
 	}
 
 	//read byte from the Flash memory
@@ -2097,9 +2111,34 @@ void parseUSB(uint8_t *str, uint32_t len)
 	{
 		dev_settings_t ds;
 
+		//retrieve and update settings
 		memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
 		strcpy(ds.callsign, strstr((char*)str, "=")+1);
+		memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
 		saveData(&ds, MEM_START, sizeof(dev_settings_t));
+	}
+
+	//set frequency correction
+	//"freq_corr=VALUE"
+	else if(strstr((char*)str, "f_corr")==(char*)str)
+	{
+		float val = atof(strstr((char*)str, "=")+1);
+
+		dev_settings_t ds;
+
+		//retrieve and update settings
+		memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
+		ds.freq_corr = val;
+		memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
+		saveData(&ds, MEM_START, sizeof(dev_settings_t));
+	}
+
+	//send text message
+	//"msg=STRING"
+	else if(strstr((char*)str, "msg")==(char*)str)
+	{
+		strcpy(message, strstr((char*)str, "=")+1);
+		initTextTX(message);
 	}
 
 	//simple echo
