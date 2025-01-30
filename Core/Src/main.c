@@ -2051,6 +2051,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 		setFreqRF(atoi(strstr((char*)str, "=")+1));
 	}
 
+	//read byte from the Flash memory
 	//"peek=ADDRESS"
 	else if(strstr((char*)str, "peek")==(char*)str)
 	{
@@ -2060,6 +2061,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	}
 
+	//write byte to the Flash memory (use with caution)
 	//"poke=ADDRESS val=VALUE"
 	else if(strstr((char*)str, "poke")==(char*)str)
 	{
@@ -2076,15 +2078,28 @@ void parseUSB(uint8_t *str, uint32_t len)
 	}
 
 	//load settings from nvmem
+	//"load"
 	else if(strstr((char*)str, "load")==(char*)str)
 	{
 		loadDeviceSettings(&dev_settings, &def_dev_settings);
 	}
 
+	//erase Flash memory sector
 	//"erase"
 	else if(strstr((char*)str, "erase")==(char*)str)
 	{
 		eraseSector();
+	}
+
+	//set SRC callsign
+	//"src_call=STRING"
+	else if(strstr((char*)str, "src_call")==(char*)str)
+	{
+		dev_settings_t ds;
+
+		memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
+		strcpy(ds.callsign, strstr((char*)str, "=")+1);
+		saveData(&ds, MEM_START, sizeof(dev_settings_t));
 	}
 
 	//simple echo
