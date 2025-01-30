@@ -6,6 +6,8 @@
 //--------------------------------------------------------------------
 #pragma once
 
+#define MAX_NUM_ITEMS		16
+
 typedef enum disp_state
 {
 	DISP_NONE,
@@ -27,14 +29,14 @@ typedef enum disp_state
 
 typedef struct menu
 {
-	char title[24];					//title
-	uint8_t num_items;				//number of items
-	char item[32][24];				//entries, 32 items max, 24 chars per item
-	char value[32][24];				//values, ---------------//---------------
-	disp_state_t next_state[32];	//next display state, one per item
-	void *next_menu[32];			//next menu, one per display state
-	disp_state_t prev_state;		//previous display state
-	void *prev_menu;				//previous menu
+	char title[24];							//title
+	uint8_t num_items;						//number of items
+	char item[MAX_NUM_ITEMS][24];			//entries
+	char value[MAX_NUM_ITEMS][24];			//values
+	disp_state_t next_state[MAX_NUM_ITEMS];	//next display state, one per item
+	void *next_menu[MAX_NUM_ITEMS];			//next menu, one per display state
+	disp_state_t prev_state;				//previous display state
+	void *prev_menu;						//previous menu
 } menu_t;
 
 menu_t main_scr, main_menu, settings_menu, radio_settings, display_settings, keyboard_settings, m17_settings, info_menu, debug_menu;

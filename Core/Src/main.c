@@ -46,7 +46,8 @@
 #define RES_X					84
 #define RES_Y					48
 #define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
-#define MEM_START				(0xF8000U) //upper 32kB
+#define MEM_START				(0x080E0000U) //last sector, 128kB
+#define CH_MAX_NUM				128
 
 #define FIX_TIMER_TRIGGER(handle_ptr) (__HAL_TIM_CLEAR_FLAG(handle_ptr, TIM_SR_UIF))
 /* USER CODE END PD */
@@ -147,7 +148,6 @@ uint8_t usb_drdy;
 typedef struct ch_settings
 {
 	rf_mode_t mode;
-	char str_mode[6];
 	ch_bw_t ch_bw;
 	rf_power_t rf_pwr;
 	char ch_name[24];
@@ -155,10 +155,10 @@ typedef struct ch_settings
 	uint32_t tx_frequency;
 } ch_settings_t;
 
+//default channel settings
 const ch_settings_t def_channel =
 {
 	RF_MODE_4FSK,
-	"M17",
 	RF_BW_12K5,
 	RF_PWR_LOW,
 	"M17 IARU R1",
@@ -168,9 +168,18 @@ const ch_settings_t def_channel =
 
 typedef struct codeplug
 {
-	char name[64];
-	ch_settings_t channel[128];
+	char name[24];
+	uint8_t num_items;
+	ch_settings_t channel[CH_MAX_NUM];
 } codeplug_t;
+
+codeplug_t codeplug;
+
+typedef enum tuning_mode
+{
+	TUNING_VFO,
+	TUNING_MEM
+} tuning_mode_t;
 
 typedef struct dev_settings
 {
@@ -181,11 +190,12 @@ typedef struct dev_settings
 	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
 	uint16_t kbd_delay; //insensitivity delay after keypress detection
 
+	tuning_mode_t tuning_mode;
 	ch_settings_t channel;
 	uint16_t ch_num;
 } dev_settings_t;
 
-dev_settings_t dev_settings =
+dev_settings_t def_dev_settings =
 {
 	"N0KIA",
 	{"OpenRTX", "rulez"},
@@ -194,9 +204,12 @@ dev_settings_t dev_settings =
 	750,
 	150,
 
+	TUNING_VFO,
 	def_channel,
 	0
 };
+
+dev_settings_t dev_settings;
 
 //M17
 uint16_t frame_samples[2][SYM_PER_FRA*10]; //sps=10
@@ -500,7 +513,8 @@ void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
 
 	dispClear(buff, 0);
 
-	setString(buff, 0, 0, &nokia_small, dev_settings.channel.str_mode, 0, ALIGN_LEFT);
+	sprintf(str, "%s", (dev_settings.channel.mode==RF_MODE_4FSK)?"M17":"FM");
+	setString(buff, 0, 0, &nokia_small, str, 0, ALIGN_LEFT);
 
 	setString(buff, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
 
@@ -771,16 +785,22 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_LEFT:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				//TODO: if in free-tuning mode
-				dev_settings->channel.tx_frequency -= 12500;
-				setFreqRF(dev_settings->channel.tx_frequency);
+				if(dev_settings->tuning_mode==TUNING_VFO)
+				{
+					dev_settings->channel.tx_frequency -= 12500;
+					setFreqRF(dev_settings->channel.tx_frequency);
 
-				char str[24];
-				sprintf(str, "T %ld.%04ld",
-						dev_settings->channel.tx_frequency/1000000,
-						(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
-				drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
-				setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+					char str[24];
+					sprintf(str, "T %ld.%04ld",
+							dev_settings->channel.tx_frequency/1000000,
+							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
+					drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
+					setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+				}
+				else// if(dev_settings->tuning_mode==TUNING_MEM)
+				{
+					;
+				}
 			}
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
@@ -851,16 +871,22 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_RIGHT:
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				//TODO: if in free-tuning mode
-				dev_settings->channel.tx_frequency += 12500;
-				setFreqRF(dev_settings->channel.tx_frequency);
+				if(dev_settings->tuning_mode==TUNING_VFO)
+				{
+					dev_settings->channel.tx_frequency += 12500;
+					setFreqRF(dev_settings->channel.tx_frequency);
 
-				char str[24];
-				sprintf(str, "T %ld.%04ld",
-						dev_settings->channel.tx_frequency/1000000,
-						(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
-				drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
-				setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+					char str[24];
+					sprintf(str, "T %ld.%04ld",
+							dev_settings->channel.tx_frequency/1000000,
+							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
+					drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
+					setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+				}
+				else// if(dev_settings->tuning_mode==TUNING_MEM)
+				{
+					;
+				}
 			}
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
@@ -1851,7 +1877,7 @@ void initRF(ch_settings_t ch_settings)
 	setRegRF(0x40, 0x0031);
 
 	//set mode
-	sprintf(msg, "[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"4FSK":"FM");
+	sprintf(msg, "[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"M17":"FM");
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	setModeRF(mode);
 
@@ -1909,6 +1935,105 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 	}
 }
 
+//memory
+uint8_t eraseSector(void)
+{
+	char msg[128];
+
+	if(HAL_FLASH_Unlock()==HAL_OK)
+	{
+		FLASH_EraseInitTypeDef erase =
+		{
+			FLASH_TYPEERASE_SECTORS,	//erase sectors
+			FLASH_BANK_1,				//bank 1 (the only available, i guess)
+			FLASH_SECTOR_11,			//start at sector 11 (last)
+			1,							//1 sector to erase
+			FLASH_VOLTAGE_RANGE_3,		//2.7 to 3.6V
+		};
+		uint32_t sector_error=0;
+
+		HAL_StatusTypeDef ret = HAL_FLASHEx_Erase(&erase, &sector_error);
+
+		if(ret==HAL_OK && sector_error==0xFFFFFFFFU) //successful erase
+		{
+			sprintf(msg, "[NVMEM] Sector erased.\n");
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			HAL_FLASH_Lock();
+
+			return 0;
+		}
+
+		sprintf(msg, "[NVMEM] Sector erasure error.\n");
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+		return 1;
+	}
+
+	sprintf(msg, "[NVMEM] Error unlocking Flash memory.\n");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+	return 1;
+}
+
+uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size)
+{
+	char msg[128];
+
+	if(eraseSector()==0) //erase ok
+	{
+		if(HAL_FLASH_Unlock()==HAL_OK) //unlock ok
+		{
+			for(uint16_t i=0; i<size; i++)
+				HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr+i, *(((uint8_t*)data)+i));
+
+			HAL_FLASH_Lock();
+
+			sprintf(msg, "[NVMEM] Data saved.\n");
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+			return 0;
+		}
+
+		sprintf(msg, "[NVMEM] Error unlocking Flash memory.\n");
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+		return 1;
+	}
+
+	sprintf(msg, "[NVMEM] Sector erasure error.\n");
+	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+	return 1;
+}
+
+//device settings
+void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings)
+{
+	char msg[128];
+
+	//if the memory is uninitialized
+	if(*((uint32_t*)MEM_START)==0xFFFFFFFFU)
+	{
+		memcpy((uint8_t*)dev_settings, (uint8_t*)def_dev_settings, sizeof(dev_settings_t));
+		HAL_StatusTypeDef ret = saveData(def_dev_settings, MEM_START, sizeof(dev_settings_t));
+
+		if(ret==HAL_OK)
+			sprintf(msg, "[NVMEM] Default device settings loaded.\n");
+		else
+			sprintf(msg, "[NVMEM] Error saving default device settings.\n");
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	}
+
+	//if settings are available in the memory
+	else
+	{
+		memcpy((uint8_t*)dev_settings, (uint8_t*)MEM_START, sizeof(dev_settings_t));
+
+		sprintf(msg, "[NVMEM] Device settings loaded.\n");
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	}
+}
+
 //USB control
 void parseUSB(uint8_t *str, uint32_t len)
 {
@@ -1931,7 +2056,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	{
 		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
 		char msg[128];
-		sprintf(msg, "%08lX: %02X\n", addr, *((uint8_t*)addr));
+		sprintf(msg, "%08lX -> 0x%02X\n", addr, *((uint8_t*)addr));
 		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	}
 
@@ -1941,18 +2066,25 @@ void parseUSB(uint8_t *str, uint32_t len)
 		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
 		uint8_t val = atoi(strstr((char*)str, "val=")+4);
 
-		if(HAL_FLASH_Unlock()==HAL_OK)
-		{
-			char msg[128];
-			sprintf(msg, "[NVMEM] Writing to memory at address %08lX\n", addr);
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-			HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr, (uint64_t)val);
-			HAL_FLASH_Lock();
-		}
-		else
-		{
-			CDC_Transmit_FS((uint8_t*)"[NVMEM] Error unlocking memory\n", 31);
-		}
+		HAL_FLASH_Unlock();
+		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr, (uint64_t)val);
+		HAL_FLASH_Lock();
+
+		char msg[128];
+		sprintf(msg, "%08lX <- 0x%02X\n", addr, val);
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	}
+
+	//load settings from nvmem
+	else if(strstr((char*)str, "load")==(char*)str)
+	{
+		loadDeviceSettings(&dev_settings, &def_dev_settings);
+	}
+
+	//"erase"
+	else if(strstr((char*)str, "erase")==(char*)str)
+	{
+		eraseSector();
 	}
 
 	//simple echo
@@ -2016,6 +2148,7 @@ int main(void)
   dispClear(disp_buff, 0);
   setBacklight(0);
 
+  loadDeviceSettings(&dev_settings, &def_dev_settings);
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
 
   radio_state = RF_RX;
