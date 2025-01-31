@@ -195,7 +195,7 @@ typedef struct dev_settings
 	ch_settings_t channel;
 	uint16_t ch_num;
 
-	char refl_name[];
+	char refl_name[12];
 } dev_settings_t;
 
 dev_settings_t def_dev_settings =
@@ -2033,9 +2033,9 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 	if(*((uint32_t*)MEM_START)==0xFFFFFFFFU)
 	{
 		memcpy((uint8_t*)dev_settings, (uint8_t*)def_dev_settings, sizeof(dev_settings_t));
-		HAL_StatusTypeDef ret = saveData(def_dev_settings, MEM_START, sizeof(dev_settings_t));
+		uint8_t ret = saveData(def_dev_settings, MEM_START, sizeof(dev_settings_t));
 
-		if(ret==HAL_OK)
+		if(ret==0)
 			sprintf(msg, "[NVMEM] Default device settings loaded.\n");
 		else
 			sprintf(msg, "[NVMEM] Error saving default device settings.\n");
@@ -2143,6 +2143,17 @@ void parseUSB(uint8_t *str, uint32_t len)
 	{
 		strcpy(message, strstr((char*)str, "=")+1);
 		initTextTX(message);
+	}
+
+	//get LSF META field
+	else if(strstr((char*)str, "meta")==(char*)str)
+	{
+		char msg[128];
+		sprintf(msg, "[Settings] META=");
+		for(uint8_t i=0; i<sizeof(lsf.meta); i++)
+			sprintf(&msg[strlen(msg)], "%02X", lsf.meta[i]);
+		sprintf(&msg[strlen(msg)], " REF=%s\n", dev_settings.refl_name);
+		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	}
 
 	//simple echo
