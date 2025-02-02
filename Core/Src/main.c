@@ -153,6 +153,8 @@ typedef struct ch_settings
 	char ch_name[24];
 	uint32_t rx_frequency;
 	uint32_t tx_frequency;
+	char dst[12];
+	uint8_t can;
 } ch_settings_t;
 
 //default channel settings
@@ -163,7 +165,9 @@ const ch_settings_t def_channel =
 	RF_PWR_LOW,
 	"M17 IARU R1",
 	433475000,
-	433475000
+	433475000,
+	"@ALL",
+	0
 };
 
 typedef struct codeplug
@@ -183,7 +187,7 @@ typedef enum tuning_mode
 
 typedef struct dev_settings
 {
-	char callsign[12];
+	char src_callsign[12];
 	char welcome_msg[2][24];
 
 	uint8_t backlight;
@@ -702,6 +706,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 	switch(key)
 	{
 		case KEY_OK:
+			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				*disp_state = menu->next_state[0];
@@ -709,6 +714,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				showMenu(buff, *((menu_t*)menu->next_menu[0]), 0, 0);
 				menu = (menu_t*)menu->next_menu[0];
 			}
+
+			//main menu
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
 				//find out where to go next
@@ -736,6 +743,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					}
 				}
 			}
+
+			//text message entry - send message
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				//initialize packet transmission
@@ -744,6 +753,25 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					initTextTX(message);
 				}
 			}
+
+			//settings, info or debug
+			else if(*disp_state==DISP_SETTINGS || \
+					*disp_state==DISP_INFO || \
+					*disp_state==DISP_DEBUG)
+			{
+				//find out where to go next
+				uint8_t item=menu_pos+menu_pos_hl;
+
+				if((menu_t*)menu->next_menu[item] != NULL)
+				{
+					menu_pos=menu_pos_hl=0;
+					*disp_state = menu->next_state[item];
+					showMenu(buff, *((menu_t*)menu->next_menu[item]), 0, 0);
+					menu = (menu_t*)menu->next_menu[item];
+				}
+			}
+
+			//
 			else
 			{
 				;
@@ -753,16 +781,21 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_C:
 			menu_pos=menu_pos_hl=0;
 
+			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				; //nothing
 			}
+
+			//main menu
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
 				*disp_state = menu->prev_state;
 				showMainScreen(buff);
 				menu = (menu_t*)menu->prev_menu;
 		    }
+
+			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				//backspace
@@ -776,24 +809,23 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 				}
 			}
-			else if(*disp_state==DISP_SETTINGS)
+
+			//settings, info or debug
+			//anything else
+			else /*if(*disp_state==DISP_SETTINGS || \
+					*disp_state==DISP_INFO || \
+					*disp_state==DISP_DEBUG)*/
 			{
 				*disp_state = menu->prev_state;
 				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
 				menu = (menu_t*)menu->prev_menu;
 			}
-			else if(*disp_state==DISP_INFO)
+
+			//
+			/*else
 			{
-				*disp_state = menu->prev_state;
-				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
-				menu = (menu_t*)menu->prev_menu;
-			}
-			else if(*disp_state==DISP_DEBUG)
-			{
-				*disp_state = menu->prev_state;
-				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
-				menu = (menu_t*)menu->prev_menu;
-			}
+				;
+			}*/
 		break;
 
 		case KEY_LEFT:
@@ -2050,6 +2082,27 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 		sprintf(msg, "[NVMEM] Device settings loaded.\n");
 		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	}
+
+	//load settings into menus
+	//frequency correction
+	sprintf(radio_settings.value[0], "%d.%d",
+			(int8_t)(dev_settings->freq_corr), (uint8_t)fabsf(10*dev_settings->freq_corr) - (int8_t)fabsf((int8_t)(dev_settings->freq_corr)*10.0f)
+	);
+
+	//RF power
+	if(dev_settings->channel.rf_pwr==RF_PWR_HIGH)
+		sprintf(radio_settings.value[1], "2W");
+	else
+		sprintf(radio_settings.value[1], "0.5W");
+
+	//SRC callsign
+	strcpy(m17_settings.value[0], dev_settings->src_callsign);
+
+	//destination
+	strcpy(m17_settings.value[1], dev_settings->channel.dst);
+
+	//CAN
+	sprintf(m17_settings.value[2], "%d", dev_settings->channel.can);
 }
 
 //USB control
@@ -2117,7 +2170,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 
 		//retrieve and update settings
 		memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
-		strcpy(ds.callsign, strstr((char*)str, "=")+1);
+		strcpy(ds.src_callsign, strstr((char*)str, "=")+1);
 		memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
 		saveData(&ds, MEM_START, sizeof(dev_settings_t));
 	}
@@ -2218,12 +2271,12 @@ int main(void)
   setBacklight(0);
 
   loadDeviceSettings(&dev_settings, &def_dev_settings);
-  dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.callsign);
+  dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
 
   radio_state = RF_RX;
   initRF(dev_settings.channel);
   setRF(radio_state);
-  set_LSF(&lsf, dev_settings.callsign, "@ALL", M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
+  set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst, M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
   //playBeep(50);
 

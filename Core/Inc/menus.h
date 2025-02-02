@@ -29,7 +29,7 @@ typedef enum disp_state
 
 typedef struct menu
 {
-	char title[24];							//title
+	char title[18];							//title
 	uint8_t num_items;						//number of items
 	char item[MAX_NUM_ITEMS][24];			//entries
 	char value[MAX_NUM_ITEMS][24];			//values
@@ -86,12 +86,12 @@ menu_t settings_menu =
 menu_t radio_settings =
 {
 	"Radio settings",
-	1,
+	2,
 
-	{"Power"},
-	{"0.5W"},
-	{DISP_NUM_VALUE_ENTRY},
-	{NULL},
+	{"Freq. corr.", "Power"},
+	{"0.0", "0.5W"},
+	{DISP_NUM_VALUE_ENTRY, DISP_NUM_VALUE_ENTRY},
+	{NULL, NULL},
 
 	DISP_SETTINGS,
 	&settings_menu
@@ -113,7 +113,7 @@ menu_t display_settings =
 
 menu_t keyboard_settings =
 {
-	"Keyboard settings",
+	"Keyboard",
 	3,
 
 	{"Timeout", "Delay", "Vibration"},
