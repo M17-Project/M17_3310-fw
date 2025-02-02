@@ -86,10 +86,10 @@ menu_t settings_menu =
 menu_t radio_settings =
 {
 	"Radio settings",
-	2,
+	1,
 
-	{"Freq. corr.", "Power"},
-	{"0.0", "0.5W"},
+	{"Offset"},
+	{"+0.0ppm"},
 	{DISP_NUM_VALUE_ENTRY, DISP_NUM_VALUE_ENTRY},
 	{NULL, NULL},
 
@@ -100,12 +100,12 @@ menu_t radio_settings =
 menu_t display_settings =
 {
 	"Display settings",
-	1,
+	3,
 
-	{"Backlight"},
-	{"160"},
-	{DISP_NUM_VALUE_ENTRY},
-	{NULL},
+	{"Intensity", "Timeout", "Always on"},
+	{"160", "5s", "No"},
+	{DISP_NUM_VALUE_ENTRY, DISP_NUM_VALUE_ENTRY, DISP_ON_OFF_ENTRY},
+	{NULL, NULL, NULL},
 
 	DISP_SETTINGS,
 	&settings_menu
@@ -117,7 +117,7 @@ menu_t keyboard_settings =
 	3,
 
 	{"Timeout", "Delay", "Vibration"},
-	{"750", "150", "OFF"},
+	{"750", "150", "Off"},
 	{DISP_NUM_VALUE_ENTRY, DISP_NUM_VALUE_ENTRY, DISP_ON_OFF_ENTRY},
 	{NULL, NULL, NULL},
 

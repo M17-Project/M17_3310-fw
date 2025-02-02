@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.0"
+#define FW_VER					"1.0.1"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -71,6 +71,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
+TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart4;
 
@@ -213,7 +214,7 @@ dev_settings_t def_dev_settings =
 	{"OpenRTX", "rulez"},
 
 	160,
-	1,
+	5,
 	0,
 	750,
 	150,
@@ -260,9 +261,11 @@ static void MX_UART4_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_TIM14_Init(void);
 /* USER CODE BEGIN PFP */
 void setRF(radio_state_t state);
 void setFreqRF(uint32_t freq, float corr);
+void setBacklight(uint8_t level);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -270,11 +273,23 @@ void setFreqRF(uint32_t freq, float corr);
 //interrupts
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
-	//text entry timer
+	//TIM1 - buzzer timer (by default at 1kHz)
+	//TIM2 - LED backlight PWM timer
+	//TIM6 - 48kHz base timer
+
+	//TIM7 - text entry timer
 	if(htim->Instance==TIM7)
 	{
 		HAL_TIM_Base_Stop(&htim7);
 		TIM7->CNT=0;
+	}
+
+	//TIM14 - display backlight timeout timer
+	else if(htim->Instance==TIM14)
+	{
+		HAL_TIM_Base_Stop(&htim14);
+		TIM14->CNT=0;
+		setBacklight(0);
 	}
 }
 
@@ -352,7 +367,7 @@ void playBeep(uint16_t duration) //blocking
 {
 	//1kHz (84MHz master clock)
 	TIM1->ARR = 10-1;
-	TIM1->PSC = 8400-1;
+	TIM1->PSC = 8400-1; //TODO: check if this really works
 
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
 	HAL_Delay(duration);
@@ -713,6 +728,22 @@ key_t scanKeys(uint8_t rep)
 
 void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings, key_t key)
 {
+	//backlight on
+	if(key!=KEY_NONE && dev_settings->backlight_always==0)
+	{
+		if(TIM14->CNT==0)
+		{
+			setBacklight(dev_settings->backlight_level);
+			FIX_TIMER_TRIGGER(&htim14);
+			HAL_TIM_Base_Start_IT(&htim14);
+		}
+		else
+		{
+			TIM14->CNT=0;
+		}
+	}
+
+	//do something based on the key pressed and current state
 	switch(key)
 	{
 		case KEY_OK:
@@ -2051,7 +2082,7 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 
 	//load settings into menus
 	//frequency correction
-	sprintf(radio_settings.value[0], "%d.%d",
+	sprintf(radio_settings.value[0], "%+d.%dppm",
 			(int8_t)(dev_settings->freq_corr), (uint8_t)fabsf(10*dev_settings->freq_corr) - (int8_t)fabsf((int8_t)(dev_settings->freq_corr)*10.0f)
 	);
 
@@ -2069,14 +2100,27 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 
 	//CAN
 	sprintf(m17_settings.value[2], "%d", dev_settings->channel.can);
+
+	//backlight timeout
+	sprintf(display_settings.value[1], "%ds", dev_settings->backlight_timer);
 }
 
 //USB control
 void parseUSB(uint8_t *str, uint32_t len)
 {
+	//backlight timeout
+	//"blt=VALUE"
+	if(strstr((char*)str, "blt")==(char*)str)
+	{
+		dev_settings.backlight_timer=atoi(strstr((char*)str, "=")+1);
+		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
+		htim14.Init.Prescaler = dev_settings.backlight_timer*2000; //1s is 2000
+		HAL_TIM_Base_Init(&htim14);
+	}
+
 	//display backlight
 	//"bl=VALUE"
-	if(strstr((char*)str, "bl")==(char*)str)
+	else if(strstr((char*)str, "bl")==(char*)str)
 	{
 		setBacklight(atoi(strstr((char*)str, "=")+1));
 	}
@@ -2132,12 +2176,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//"src_call=STRING"
 	else if(strstr((char*)str, "src_call")==(char*)str)
 	{
-		//dev_settings_t ds;
-
-		//retrieve and update settings
-		//memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
 		strcpy(dev_settings.src_callsign, strstr((char*)str, "=")+1);
-		//memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
 		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
 	}
 
@@ -2145,14 +2184,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//"freq_corr=VALUE"
 	else if(strstr((char*)str, "f_corr")==(char*)str)
 	{
-		float val = atof(strstr((char*)str, "=")+1);
-
-		//dev_settings_t ds;
-
-		//retrieve and update settings
-		//memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
-		dev_settings.freq_corr = val;
-		//memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
+		dev_settings.freq_corr = atof(strstr((char*)str, "=")+1);
 		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
 	}
 
@@ -2220,6 +2252,7 @@ int main(void)
   MX_TIM7_Init();
   MX_USB_DEVICE_Init();
   MX_TIM6_Init();
+  MX_TIM14_Init();
   /* USER CODE BEGIN 2 */
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
   	  SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
@@ -2232,13 +2265,30 @@ int main(void)
 
   HAL_Delay(200);
 
+  //init display
   dispInit();
   dispClear(disp_buff, 0);
   setBacklight(0);
 
+  //load settings from NVMEM
   loadDeviceSettings(&dev_settings, &def_dev_settings);
+
+  //turn on backlight if required
+  if(dev_settings.backlight_always==1)
+  {
+	  setBacklight(dev_settings.backlight_level);
+  }
+  else
+  {
+	  //update PSC value
+	  htim14.Init.Prescaler = dev_settings.backlight_timer*2000; //1s is 2000
+	  HAL_TIM_Base_Init(&htim14);
+  }
+
+  //display splash screen
   dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
 
+  //init SA868S RF module
   radio_state = RF_RX;
   initRF(dev_settings.channel);
   setRF(radio_state);
@@ -2246,7 +2296,12 @@ int main(void)
 		  M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(dev_settings.channel.can) | \
 		  M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
-  //playBeep(50);
+
+  //play beep if required
+  /*if(dev_settings.beep_on_start==1)
+  {
+  	  playBeep(50);
+  }*/
 
   //menu init
   menu = &main_scr;
@@ -2826,6 +2881,37 @@ static void MX_TIM7_Init(void)
   /* USER CODE BEGIN TIM7_Init 2 */
 
   /* USER CODE END TIM7_Init 2 */
+
+}
+
+/**
+  * @brief TIM14 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM14_Init(void)
+{
+
+  /* USER CODE BEGIN TIM14_Init 0 */
+
+  /* USER CODE END TIM14_Init 0 */
+
+  /* USER CODE BEGIN TIM14_Init 1 */
+
+  /* USER CODE END TIM14_Init 1 */
+  htim14.Instance = TIM14;
+  htim14.Init.Prescaler = 2000-1;
+  htim14.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim14.Init.Period = 42000-1;
+  htim14.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim14.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim14) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM14_Init 2 */
+
+  /* USER CODE END TIM14_Init 2 */
 
 }
 
