@@ -193,7 +193,9 @@ typedef struct dev_settings
 	char src_callsign[12];
 	char welcome_msg[2][24];
 
-	uint8_t backlight;
+	uint8_t backlight_level;
+	uint8_t backlight_timer;
+	uint8_t backlight_always;
 	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
 	uint16_t kbd_delay; //insensitivity delay after keypress detection
 	float freq_corr;
@@ -211,6 +213,8 @@ dev_settings_t def_dev_settings =
 	{"OpenRTX", "rulez"},
 
 	160,
+	1,
+	0,
 	750,
 	150,
 	0.0f,
@@ -564,10 +568,13 @@ void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *cal
 	setString(buff, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
 
 	//fade in
-	for(uint16_t i=0; i<dev_settings.backlight; i++)
+	if(dev_settings.backlight_always==1)
 	{
-		setBacklight(i);
-		HAL_Delay(5);
+		for(uint16_t i=0; i<dev_settings.backlight_level; i++)
+		{
+			setBacklight(i);
+			HAL_Delay(5);
+		}
 	}
 }
 
@@ -832,6 +839,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_LEFT:
+			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				if(dev_settings->tuning_mode==TUNING_VFO)
@@ -851,73 +859,47 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					;
 				}
 			}
-			else if(*disp_state==DISP_MAIN_MENU)
-			{
-				if(menu_pos_hl==3)
-				{
-					if(menu_pos+3<main_menu.num_items-1)
-						menu_pos++;
-				}
-				else
-				{
-					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<main_menu.num_items-1)
-						menu_pos_hl++;
-				}
-				//no state change
-				showMenu(buff, main_menu, menu_pos, menu_pos_hl);
-			}
+
+			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				;
 			}
-			else if(*disp_state==DISP_SETTINGS)
+
+			//other menus
+			else /*if(*disp_state==DISP_SETTINGS || \
+					*disp_state==DISP_INFO || \
+					*disp_state==DISP_DEBUG)*/
 			{
-				if(menu_pos_hl==3)
+				if(menu_pos_hl==3 || menu_pos_hl==menu->num_items-1)
 				{
 					if(menu_pos+3<settings_menu.num_items-1)
 						menu_pos++;
+					else //wrap around
+					{
+						menu_pos=0;
+						menu_pos_hl=0;
+					}
 				}
 				else
 				{
 					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<settings_menu.num_items-1)
 						menu_pos_hl++;
 				}
+
 				//no state change
-				showMenu(buff, settings_menu, menu_pos, menu_pos_hl);
+				showMenu(buff, *menu, menu_pos, menu_pos_hl);
 			}
-			else if(*disp_state==DISP_INFO)
+
+			//else
+			/*else
 			{
-				if(menu_pos_hl==3)
-				{
-					if(menu_pos+3<info_menu.num_items-1)
-						menu_pos++;
-				}
-				else
-				{
-					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<info_menu.num_items-1)
-						menu_pos_hl++;
-				}
-				//no state change
-				showMenu(buff, info_menu, menu_pos, menu_pos_hl);
-			}
-			else if(*disp_state==DISP_DEBUG)
-			{
-				if(menu_pos_hl==3)
-				{
-					if(menu_pos+3<debug_menu.num_items-1)
-						menu_pos++;
-				}
-				else
-				{
-					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<debug_menu.num_items-1)
-						menu_pos_hl++;
-				}
-				//no state change
-				showMenu(buff, debug_menu, menu_pos, menu_pos_hl);
-			}
+				;
+			}*/
 		break;
 
 		case KEY_RIGHT:
+			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				if(dev_settings->tuning_mode==TUNING_VFO)
@@ -937,71 +919,52 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					;
 				}
 			}
-			else if(*disp_state==DISP_MAIN_MENU)
-			{
-				if(menu_pos_hl==0)
-				{
-					if(menu_pos>0)
-						menu_pos--;
-				}
-				else
-				{
-					if(menu_pos_hl>0)
-						menu_pos_hl--;
-				}
-				//no state change
-				showMenu(buff, main_menu, menu_pos, menu_pos_hl);
-			}
+
+			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				pos=strlen(message);
 				memset((char*)code, 0, strlen((char*)code));
 			}
-			else if(*disp_state==DISP_SETTINGS)
+
+			//other menus
+			else /*if(*disp_state==DISP_SETTINGS || \
+					*disp_state==DISP_INFO || \
+					*disp_state==DISP_DEBUG)*/
 			{
 				if(menu_pos_hl==0)
 				{
 					if(menu_pos>0)
 						menu_pos--;
+					else //wrap around
+					{
+						if(menu->num_items>3)
+						{
+							menu_pos=menu->num_items-1-3;
+							menu_pos_hl=3;
+						}
+						else
+						{
+							menu_pos=0;
+							menu_pos_hl=menu->num_items-1;
+						}
+					}
 				}
 				else
 				{
 					if(menu_pos_hl>0)
 						menu_pos_hl--;
 				}
+
 				//no state change
-				showMenu(buff, settings_menu, menu_pos, menu_pos_hl);
+				showMenu(buff, *menu, menu_pos, menu_pos_hl);
 			}
-			else if(*disp_state==DISP_INFO)
+
+			//else
+			/*else
 			{
-				if(menu_pos_hl==0)
-				{
-					if(menu_pos>0)
-						menu_pos--;
-				}
-				else
-				{
-					if(menu_pos_hl>0)
-						menu_pos_hl--;
-				}
-				//no state change
-				showMenu(buff, info_menu, menu_pos, menu_pos_hl);
-			}
-			else if(*disp_state==DISP_DEBUG)
-			{
-				if(menu_pos_hl==0)
-				{
-					if(menu_pos>0)
-						menu_pos--;
-				}
-				else
-				{
-					if(menu_pos_hl>0)
-						menu_pos_hl--;
-				}
-				//no state change
-				showMenu(buff, debug_menu, menu_pos, menu_pos_hl);
-			}
+				;
+			}*/
 		break;
 
 		case KEY_1:
@@ -2279,7 +2242,9 @@ int main(void)
   radio_state = RF_RX;
   initRF(dev_settings.channel);
   setRF(radio_state);
-  set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst, M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(0) | M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
+  set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst,
+		  M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(dev_settings.channel.can) | \
+		  M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
   //playBeep(50);
 
