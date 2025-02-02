@@ -2303,7 +2303,7 @@ int main(void)
 	  if(r%100==0 && disp_state==DISP_MAIN_SCR)
 	  {
 		  //clear the upper right portion of the screen
-		  drawRect(disp_buff, RES_X-1-12, 0, RES_X-1, 8, 1, 1);
+		  drawRect(disp_buff, RES_X-1-15, 0, RES_X-1, 8, 1, 1);
 
 		  //is the battery charging? (read /CHG signal)
 		  if(!(CHG_GPIO_Port->IDR & CHG_Pin))
@@ -2314,7 +2314,10 @@ int main(void)
 		  {
 			  char u_batt_str[8];
 			  uint16_t u_batt=getBattVoltage();
-			  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
+			  if(u_batt>3500)
+				  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
+			  else
+				  sprintf(u_batt_str, "Lo");
 			  setString(disp_buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
 		  }
 	  }
