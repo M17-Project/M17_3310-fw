@@ -75,6 +75,9 @@ TIM_HandleTypeDef htim7;
 UART_HandleTypeDef huart4;
 
 /* USER CODE BEGIN PV */
+//superloop rotation counter
+uint16_t r;
+
 //display
 uint8_t disp_buff[DISP_BUFF_SIZ];
 
@@ -541,14 +544,14 @@ void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
 	//is the battery charging? (read /CHG signal)
 	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
 	{
-		setString(buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display
+		setString(buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display charging status
 	}
 	else
 	{
 		char u_batt_str[8];
 		uint16_t u_batt=getBattVoltage();
 		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
-		setString(buff, RES_X-1, 0, &nokia_small, u_batt_str, 1, ALIGN_RIGHT); //clear
+		setString(buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT); //display voltage
 	}
 }
 
@@ -2166,13 +2169,13 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//"src_call=STRING"
 	else if(strstr((char*)str, "src_call")==(char*)str)
 	{
-		dev_settings_t ds;
+		//dev_settings_t ds;
 
 		//retrieve and update settings
-		memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
-		strcpy(ds.src_callsign, strstr((char*)str, "=")+1);
-		memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
-		saveData(&ds, MEM_START, sizeof(dev_settings_t));
+		//memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
+		strcpy(dev_settings.src_callsign, strstr((char*)str, "=")+1);
+		//memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
+		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
 	}
 
 	//set frequency correction
@@ -2181,13 +2184,13 @@ void parseUSB(uint8_t *str, uint32_t len)
 	{
 		float val = atof(strstr((char*)str, "=")+1);
 
-		dev_settings_t ds;
+		//dev_settings_t ds;
 
 		//retrieve and update settings
-		memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
-		ds.freq_corr = val;
-		memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
-		saveData(&ds, MEM_START, sizeof(dev_settings_t));
+		//memcpy((uint8_t*)&ds, (uint8_t*)&dev_settings, sizeof(dev_settings_t));
+		dev_settings.freq_corr = val;
+		//memcpy((uint8_t*)&dev_settings, (uint8_t*)&ds, sizeof(dev_settings_t));
+		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
 	}
 
 	//send text message
@@ -2290,8 +2293,33 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
+	  //superloop rotation counter
+	  r++;
+
+	  //handle key presses
 	  handleKey(disp_buff, &disp_state, &text_mode, &radio_state, &dev_settings, scanKeys(dev_settings.kbd_delay));
 
+	  //refresh main screen data
+	  if(r%100==0 && disp_state==DISP_MAIN_SCR)
+	  {
+		  //clear the upper right portion of the screen
+		  drawRect(disp_buff, RES_X-1-12, 0, RES_X-1, 8, 1, 1);
+
+		  //is the battery charging? (read /CHG signal)
+		  if(!(CHG_GPIO_Port->IDR & CHG_Pin))
+		  {
+			  setString(disp_buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT);
+		  }
+		  else
+		  {
+			  char u_batt_str[8];
+			  uint16_t u_batt=getBattVoltage();
+			  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
+			  setString(disp_buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
+		  }
+	  }
+
+	  //packet transfer triggered - start transmission
 	  if(frame_pend)
 	  {
 		  //this is a workaround for the module's initial frequency wobble after RX->TX transition
@@ -2358,6 +2386,7 @@ int main(void)
 		  frame_pend=0;
 	  }
 
+	  //received data over USB
 	  if(usb_drdy)
 	  {
 		  parseUSB(usb_rx, usb_len);
