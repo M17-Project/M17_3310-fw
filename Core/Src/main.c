@@ -138,9 +138,9 @@ typedef enum rf_power
 	RF_PWR_HIGH
 } rf_power_t;
 
-//T9 related variables
+//text/T9 related variables
 volatile char code[15]="";
-char message[256]="";
+char message[256]=""; //this handles all kinds of text entry
 volatile uint8_t pos=0;
 
 //usb-related
@@ -593,7 +593,7 @@ void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *cal
 	}
 }
 
-void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
+void showTextMessageEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
 {
 	dispClear(buff, 0);
 
@@ -603,6 +603,13 @@ void showTextEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
 		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
 
 	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
+}
+
+void showTextEntry(uint8_t buff[DISP_BUFF_SIZ])
+{
+	dispClear(buff, 0);
+
+	setString(buff, 0, 0, &nokia_small_bold, "Enter text", 0, ALIGN_CENTER);
 }
 
 //show menu with item highlighting
@@ -743,17 +750,22 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		}
 	}
 
+	char msg[128];
+
 	//do something based on the key pressed and current state
 	switch(key)
 	{
 		case KEY_OK:
+			sprintf(msg, "[Debug] Start disp_state: %d\n", *disp_state);
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
 			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
 			{
-				*disp_state = menu->next_state[0];
 				menu_pos=menu_pos_hl=0;
-				showMenu(buff, *((menu_t*)menu->next_menu[0]), 0, 0);
+				*disp_state = menu->next_state[0];
 				menu = (menu_t*)menu->next_menu[0];
+				showMenu(buff, *menu, 0, 0);
 			}
 
 			//main menu
@@ -768,10 +780,10 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				if(item==0) //"Messaging"
 				{
 					//clear message and display text entry screen
-					memset(message, 0, strlen(message));
 					*disp_state = menu->next_state[0];
-					showTextEntry(buff, *text_mode);
 					menu = (menu_t*)menu->next_menu[0];
+					memset(message, 0, strlen(message));
+					showTextMessageEntry(buff, *text_mode);
 				}
 				else
 				{
@@ -779,8 +791,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					{
 						menu_pos=menu_pos_hl=0;
 						*disp_state = menu->next_state[item];
-						showMenu(buff, *((menu_t*)menu->next_menu[item]), 0, 0);
 						menu = (menu_t*)menu->next_menu[item];
+						showMenu(buff, *menu, 0, 0);
 					}
 				}
 			}
@@ -807,8 +819,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				{
 					menu_pos=menu_pos_hl=0;
 					*disp_state = menu->next_state[item];
-					showMenu(buff, *((menu_t*)menu->next_menu[item]), 0, 0);
 					menu = (menu_t*)menu->next_menu[item];
+					showMenu(buff, *menu, 0, 0);
 				}
 			}
 
@@ -817,10 +829,16 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			{
 				;
 			}
+
+			sprintf(msg, "[Debug] End disp_state: %d\n", *disp_state);
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 		break;
 
 		case KEY_C:
 			menu_pos=menu_pos_hl=0;
+
+			sprintf(msg, "[Debug] Start disp_state: %d\n", *disp_state);
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 
 			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
@@ -832,8 +850,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
 				*disp_state = menu->prev_state;
-				showMainScreen(buff);
 				menu = (menu_t*)menu->prev_menu;
+				showMainScreen(buff);
 		    }
 
 			//text message entry
@@ -851,22 +869,16 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				}
 			}
 
-			//settings, info or debug
 			//anything else
-			else /*if(*disp_state==DISP_SETTINGS || \
-					*disp_state==DISP_INFO || \
-					*disp_state==DISP_DEBUG)*/
+			else
 			{
 				*disp_state = menu->prev_state;
-				showMenu(buff, *((menu_t*)menu->prev_menu), 0, 0);
 				menu = (menu_t*)menu->prev_menu;
+				showMenu(buff, *menu, 0, 0);
 			}
 
-			//
-			/*else
-			{
-				;
-			}*/
+			sprintf(msg, "[Debug] End disp_state: %d\n", *disp_state);
+			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 		break;
 
 		case KEY_LEFT:

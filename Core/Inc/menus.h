@@ -90,8 +90,8 @@ menu_t radio_settings =
 
 	{"Offset"},
 	{"+0.0ppm"},
-	{DISP_NUM_VALUE_ENTRY, DISP_NUM_VALUE_ENTRY},
-	{NULL, NULL},
+	{DISP_NUM_VALUE_ENTRY},
+	{NULL},
 
 	DISP_SETTINGS,
 	&settings_menu

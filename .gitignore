@@ -26,7 +26,8 @@ local.properties
 .recommenders/
 
 Debug/
-Release/
+Release/*
+!Release/M17_3310-fw.bin
 
 .settings/
 .mxproject
