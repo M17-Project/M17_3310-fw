@@ -2305,8 +2305,7 @@ int main(void)
   initRF(dev_settings.channel);
   setRF(radio_state);
   set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst,
-		  M17_TYPE_PACKET | M17_TYPE_DATA | M17_TYPE_CAN(dev_settings.channel.can) | \
-		  M17_TYPE_META_TEXT | M17_TYPE_UNSIGNED, NULL);
+		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
 
   //play beep if required
@@ -2984,8 +2983,8 @@ static void MX_DMA_Init(void)
 static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
-/* USER CODE BEGIN MX_GPIO_Init_1 */
-/* USER CODE END MX_GPIO_Init_1 */
+  /* USER CODE BEGIN MX_GPIO_Init_1 */
+  /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOC_CLK_ENABLE();
@@ -3060,8 +3059,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(BTN_OK_GPIO_Port, &GPIO_InitStruct);
 
-/* USER CODE BEGIN MX_GPIO_Init_2 */
-/* USER CODE END MX_GPIO_Init_2 */
+  /* USER CODE BEGIN MX_GPIO_Init_2 */
+  /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
