@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.1"
+#define FW_VER					"1.0.3"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -59,6 +59,7 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
 
 DAC_HandleTypeDef hdac;
 DMA_HandleTypeDef hdma_dac1;
@@ -71,6 +72,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
+TIM_HandleTypeDef htim8;
 TIM_HandleTypeDef htim14;
 
 UART_HandleTypeDef huart4;
@@ -237,6 +239,7 @@ uint8_t frame_cnt; //frame counter, preamble=0
 volatile uint8_t frame_pend; //frame generation pending?
 uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
+uint8_t payload[26]; //frame payload
 
 //radio
 typedef enum radio_state
@@ -246,6 +249,9 @@ typedef enum radio_state
 } radio_state_t;
 
 radio_state_t radio_state;
+
+//ADC
+volatile uint16_t adc_vals[2];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -262,6 +268,7 @@ static void MX_SPI1_Init(void);
 static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM14_Init(void);
+static void MX_TIM8_Init(void);
 /* USER CODE BEGIN PFP */
 void setRF(radio_state_t state);
 void setFreqRF(uint32_t freq, float corr);
@@ -275,7 +282,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	//TIM1 - buzzer timer (by default at 1kHz)
 	//TIM2 - LED backlight PWM timer
-	//TIM6 - 48kHz base timer
+	//TIM6 - 48kHz base timer (for the DAC)
 
 	//TIM7 - text entry timer
 	if(htim->Instance==TIM7)
@@ -283,6 +290,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		HAL_TIM_Base_Stop(&htim7);
 		TIM7->CNT=0;
 	}
+
+	//TIM8 - 24kHz baseband timer (for the ADC)
 
 	//TIM14 - display backlight timeout timer
 	else if(htim->Instance==TIM14)
@@ -310,7 +319,12 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 }
 
 //ADC
-void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+	;
+}
+
+/*void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
 {
 	ADC_ChannelConfTypeDef sConfig = {0};
 	sConfig.Channel = channel;
@@ -320,25 +334,25 @@ void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
 	{
 		Error_Handler();
 	}
-}
+}*/
 
 uint16_t getBattVoltage(void)
 {
-	ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_1);
+	/*ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_1);
 	HAL_ADC_Start(&hadc1);
-	while(HAL_ADC_PollForConversion(&hadc1, 5)!=HAL_OK);
+	while(HAL_ADC_PollForConversion(&hadc1, 5)!=HAL_OK);*/
 
-	return (ADC1->DR)/4095.0f * 3300.0f * 2.0f;
+	return adc_vals[1]/4095.0f * 3300.0f * 2.0f; //(ADC1->DR)/4095.0f * 3300.0f * 2.0f;
 }
 
 //get baseband sample - debug
 uint16_t getBasebandSample(void)
 {
-	ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_0);
+	/*ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_0);
 	HAL_ADC_Start(&hadc1);
-	while(HAL_ADC_PollForConversion(&hadc1, 0)!=HAL_OK);
+	while(HAL_ADC_PollForConversion(&hadc1, 0)!=HAL_OK);*/
 
-	return (ADC1->DR)/4095.0f * 3300.0f;
+	return adc_vals[0]/4095.0f * 3300.0f; //(ADC1->DR)/4095.0f * 3300.0f;
 }
 
 //T9 related
@@ -637,6 +651,11 @@ void showMenu(uint8_t buff[DISP_BUFF_SIZ], const menu_t menu, const uint8_t star
 //note: some variables inside this function are global
 void initTextTX(const char *message)
 {
+	HAL_ADC_Stop_DMA(&hadc1);
+	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC sample clock
+
+	memset(payload, 0, 26);
+
 	uint16_t msg_len = strlen(message);
 
 	packet_payload[0]=0x05; //packet type: SMS
@@ -2265,15 +2284,16 @@ int main(void)
   MX_USB_DEVICE_Init();
   MX_TIM6_Init();
   MX_TIM14_Init();
+  MX_TIM8_Init();
   /* USER CODE BEGIN 2 */
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
-  	  SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
+  SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
   #endif
 
   //set baseband DAC to idle
   frame_samples[0][0]=DAC_IDLE;
   HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
-  HAL_TIM_Base_Start(&htim6); //48kHz
+  HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out)
 
   HAL_Delay(200);
 
@@ -2304,6 +2324,9 @@ int main(void)
   radio_state = RF_RX;
   initRF(dev_settings.channel);
   setRF(radio_state);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
+  HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in)
+
   set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst,
 		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
@@ -2381,28 +2404,39 @@ int main(void)
 		  else if(frame_cnt==warmup)
 		  {
 			  //LSF with sample META field
-			  encode_callsign_bytes(&lsf.meta[0], (uint8_t*)dev_settings.refl_name);
+			  /*encode_callsign_bytes(&lsf.meta[0], (uint8_t*)dev_settings.refl_name);
 			  //encode_callsign_bytes(&lsf.meta[6], (uint8_t*)"");
-			  update_LSF_CRC(&lsf);
+			  update_LSF_CRC(&lsf);*/
 			  gen_frame_i8(frame_symbols, lsf.meta, FRAME_LSF, &lsf, 0, 0);
 			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
 		  }
 		  else
 		  {
-			  uint16_t bytes_left=packet_bytes-(frame_cnt-warmup-1)*25;
-			  uint8_t payload[26];
+			  //last frame
+			  if((payload[25]&0x80)==0)
+			  {
+				  uint16_t bytes_left=packet_bytes-(frame_cnt-warmup-1)*25;
 
-			  memcpy(payload, &packet_payload[(frame_cnt-warmup-1)*25], 25);
-			  if(bytes_left>25)
-				  payload[25] = (frame_cnt-warmup-1)<<2;
+				  memcpy(payload, &packet_payload[(frame_cnt-warmup-1)*25], 25);
+				  if(bytes_left>25)
+					  payload[25] = (frame_cnt-warmup-1)<<2;
+				  else
+					  payload[25] = 0x80 | ((bytes_left)<<2);
+
+				  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf, 0, 0);
+				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
+			  }
+
+			  //or EOT
 			  else
-				  payload[25] = 0x80 | ((bytes_left)<<2);
-
-			  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf, 0, 0);
-			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
+			  {
+				  uint32_t cnt=0;
+				  gen_eot_i8(frame_symbols, &cnt);
+				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
+			  }
 		  }
 
-		  if(frame_cnt<(packet_bytes/25+1)+warmup)
+		  if(frame_cnt<warmup+(1+packet_bytes/25+1))
 		  {
 			  frame_cnt++;
 		  }
@@ -2415,6 +2449,9 @@ int main(void)
 
 			  disp_state = DISP_MAIN_SCR;
 			  showMainScreen(disp_buff);
+
+			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
+			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC sample clock
 		  }
 
 		  frame_pend=0;
@@ -2505,12 +2542,12 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ScanConvMode = ENABLE;
   hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
-  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
-  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc1.Init.NbrOfConversion = 2;
-  hadc1.Init.DMAContinuousRequests = DISABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -2896,6 +2933,52 @@ static void MX_TIM7_Init(void)
 }
 
 /**
+  * @brief TIM8 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM8_Init(void)
+{
+
+  /* USER CODE BEGIN TIM8_Init 0 */
+
+  /* USER CODE END TIM8_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM8_Init 1 */
+
+  /* USER CODE END TIM8_Init 1 */
+  htim8.Instance = TIM8;
+  htim8.Init.Prescaler = 0;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.Period = 3500-1;
+  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim8.Init.RepetitionCounter = 0;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim8, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM8_Init 2 */
+
+  /* USER CODE END TIM8_Init 2 */
+
+}
+
+/**
   * @brief TIM14 Initialization Function
   * @param None
   * @retval None
@@ -2967,11 +3050,15 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
 
