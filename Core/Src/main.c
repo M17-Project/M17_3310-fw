@@ -252,6 +252,9 @@ radio_state_t radio_state;
 
 //ADC
 volatile uint16_t adc_vals[2];
+volatile uint16_t bsb_cnt;
+volatile uint16_t bsb_in[960*2];
+volatile uint8_t bsb_rdy;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -321,7 +324,19 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 //ADC
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-	;
+	bsb_in[bsb_cnt]=adc_vals[0];
+	bsb_cnt++;
+
+	//Debug: send the samples over UART
+	if(bsb_cnt==960)
+	{
+		CDC_Transmit_FS((uint8_t*)&bsb_in[0], 960*2);
+	}
+	else if(bsb_cnt==960*2)
+	{
+		CDC_Transmit_FS((uint8_t*)&bsb_in[960], 960*2);
+		bsb_cnt=0;
+	}
 }
 
 /*void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
@@ -2540,7 +2555,7 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.ScanConvMode = ENABLE;
-  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
@@ -2557,7 +2572,7 @@ static void MX_ADC1_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_0;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -2951,9 +2966,9 @@ static void MX_TIM8_Init(void)
 
   /* USER CODE END TIM8_Init 1 */
   htim8.Instance = TIM8;
-  htim8.Init.Prescaler = 0;
+  htim8.Init.Prescaler = 1-1;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 3500-1;
+  htim8.Init.Period = 7000-1;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
