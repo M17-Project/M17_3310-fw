@@ -254,7 +254,6 @@ radio_state_t radio_state;
 volatile uint16_t adc_vals[2];
 volatile uint16_t bsb_cnt;
 volatile uint16_t bsb_in[960*2];
-volatile uint8_t bsb_rdy;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -276,6 +275,7 @@ static void MX_TIM8_Init(void);
 void setRF(radio_state_t state);
 void setFreqRF(uint32_t freq, float corr);
 void setBacklight(uint8_t level);
+void chBwRF(ch_bw_t bw);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -1701,19 +1701,22 @@ void setKeysTimeout(const uint16_t delay)
 }
 
 //RF module
-void setRegRF(uint8_t reg, uint16_t val)
+uint8_t setRegRF(uint8_t reg, uint16_t val)
 {
-	char data[64], rcv[64]={0};
+	char data[20], rcv[5]={0};
 	uint8_t len;
 
 	len = sprintf(data, "AT+POKE=%d,%d\r\n", reg, val);
 	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
-
-	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 64, 10);
+	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 4, 50);
 
 	/*char msg[128];
 	sprintf(msg, "[RF module] POKE %02X %04X reply: %s\n", reg, val, rcv);
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+
+	if(strcmp(rcv, "OK\r\n")==0)
+		return 0;
+	return 1;
 }
 
 uint16_t getRegRF(uint8_t reg)
@@ -2339,8 +2342,11 @@ int main(void)
   radio_state = RF_RX;
   initRF(dev_settings.channel);
   setRF(radio_state);
+
+  //start ADC sampling
+  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
-  HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in)
+  HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in, batt. voltage sense)
 
   set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst,
 		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
@@ -2401,6 +2407,8 @@ int main(void)
 		  {
 			  dispClear(disp_buff, 0);
 			  setString(disp_buff, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+
+			  chBwRF(dev_settings.channel.ch_bw); //TODO: get rid of this workaround
 
 			  //preamble
 			  uint32_t cnt=0;
@@ -2465,6 +2473,7 @@ int main(void)
 			  disp_state = DISP_MAIN_SCR;
 			  showMainScreen(disp_buff);
 
+			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
 			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
 			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC sample clock
 		  }
