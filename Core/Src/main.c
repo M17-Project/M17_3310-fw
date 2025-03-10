@@ -2651,7 +2651,7 @@ int main(void)
 
 				  //skip next 5 samples
 				  for(uint8_t j=0; j<5; j++)
-					  popU16Value(&raw_bsb_ring);
+					  fltSample(popU16Value(&raw_bsb_ring));
 				  i+=5;
 			  }
 		  }
