@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.3"
+#define FW_VER					"1.0.4"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -50,6 +50,8 @@
 #define CH_MAX_NUM				128
 
 #define FIX_TIMER_TRIGGER(handle_ptr) (__HAL_TIM_CLEAR_FLAG(handle_ptr, TIM_SR_UIF))
+
+#define arrlen(x) (sizeof(x)/sizeof(*x))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -254,6 +256,20 @@ radio_state_t radio_state;
 volatile uint16_t adc_vals[2];
 volatile uint16_t bsb_cnt;
 volatile uint16_t bsb_in[960*2];
+
+//ring buffer
+typedef struct ring
+{
+    volatile void *buffer;
+    uint16_t size;
+    uint16_t wr_pos;
+    uint16_t rd_pos;
+    uint16_t num_items;
+} ring_t;
+
+volatile ring_t raw_bsb_ring;
+volatile uint16_t raw_bsb_buff[960];
+float flt_bsb_buff[960];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -280,6 +296,118 @@ void chBwRF(ch_bw_t bw);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+//ring buffer functions
+void initRing(volatile ring_t *ring, volatile void *buffer, uint16_t size)
+{
+    ring->buffer = buffer;
+    ring->size = size;
+    ring->wr_pos = 0;
+    ring->rd_pos = 0;
+    ring->num_items = 0;
+}
+
+uint16_t getNumItems(volatile ring_t *ring)
+{
+    return ring->num_items;
+}
+
+uint16_t getSize(volatile ring_t *ring)
+{
+    return ring->size;
+}
+
+uint8_t pushU16Value(volatile ring_t *ring, uint16_t val)
+{
+    uint16_t size = getSize(ring);
+
+    if(getNumItems(ring)<size)
+    {
+        ((uint16_t*)ring->buffer)[ring->wr_pos]=val;
+        ring->wr_pos = (ring->wr_pos+1) % size;
+        ring->num_items++;
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+uint8_t pushFloatValue(volatile ring_t *ring, float val)
+{
+    uint16_t size = getSize(ring);
+
+    if(getNumItems(ring)<size)
+    {
+        ((float*)ring->buffer)[ring->wr_pos]=val;
+        ring->wr_pos = (ring->wr_pos+1) % size;
+        ring->num_items++;
+        return 0;
+    }
+    else
+    {
+        return 1;
+    }
+}
+
+uint16_t popU16Value(volatile ring_t *ring)
+{
+    if(getNumItems(ring)>0)
+    {
+        uint16_t size = getSize(ring);
+        uint16_t pos = ring->rd_pos;
+
+        ring->rd_pos = (ring->rd_pos+1) % size;
+        ring->num_items--;
+
+        return ((uint16_t*)ring->buffer)[pos];
+    }
+
+    return 0;
+}
+
+float popFloatValue(volatile ring_t *ring)
+{
+    if(getNumItems(ring)>0)
+    {
+        uint16_t size = getSize(ring);
+        uint16_t pos = ring->rd_pos;
+
+        ring->rd_pos = (ring->rd_pos+1) % size;
+        ring->num_items--;
+
+        return ((float*)ring->buffer)[pos];
+    }
+
+    return 0.0f;
+}
+
+//baseband filtering
+float fltSample(const uint16_t sample)
+{
+	const float gain = 18.0f*1.8f/2048.0f/sqrtf(5.0f); //gain found experimentally
+	static int16_t sr[41];
+
+	//push the shift register
+	for(uint8_t i=0; i<40; i++)
+		sr[i]=sr[i+1];
+	sr[40]=(int16_t)sample-2048; //push the sample, remove DC offset
+
+	float acc=0.0f;
+	for(uint8_t i=0; i<41; i++)
+	{
+		acc += (float)sr[i]*rrc_taps_5[i];
+	}
+
+	return acc*gain;
+}
+
+void flushBsbFlt(void)
+{
+	for(uint8_t i=0; i<41; i++)
+		fltSample(0);
+}
+
 //interrupts
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -324,7 +452,11 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 //ADC
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-	bsb_in[bsb_cnt]=adc_vals[0];
+	//push raw baseband sample into a ring buffer
+	pushU16Value(&raw_bsb_ring, adc_vals[0]);
+
+	//TODO: debug stuff
+	/*bsb_in[bsb_cnt]=adc_vals[0];
 	bsb_cnt++;
 
 	//Debug: send the samples over UART
@@ -336,7 +468,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 	{
 		CDC_Transmit_FS((uint8_t*)&bsb_in[960], 960*2);
 		bsb_cnt=0;
-	}
+	}*/
 }
 
 /*void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
@@ -2343,6 +2475,9 @@ int main(void)
   initRF(dev_settings.channel);
   setRF(radio_state);
 
+  //init ring buffer
+  initRing(&raw_bsb_ring, raw_bsb_buff, arrlen(raw_bsb_buff));
+
   //start ADC sampling
   chBwRF(RF_BW_25K); //TODO: get rid of this workaround
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
@@ -2487,6 +2622,41 @@ int main(void)
 		  parseUSB(usb_rx, usb_len);
 		  usb_drdy=0;
 	  }
+
+	  //check if there are any new baseband samples available
+	  uint16_t num_samples;
+	  if((num_samples=getNumItems(&raw_bsb_ring))>=400 && radio_state==RF_RX) //no specific reason to use 400 samples
+	  {
+		  for(uint16_t i=0; i<num_samples; i++)
+		  {
+			  //consume sample
+			  for(uint16_t j=0; j<8*5-1; j++)
+				  flt_bsb_buff[j]=flt_bsb_buff[j+1];
+			  flt_bsb_buff[8*5-1] = -fltSample(popU16Value(&raw_bsb_ring));
+
+			  //L2 norm check against syncword
+			  float symbols[8];
+			  for(uint8_t j=0; j<8; j++)
+				  symbols[j]=flt_bsb_buff[j*5];
+
+			  float dist_lsf = eucl_norm(symbols, lsf_sync_symbols, 8);
+			  //pushFloatValue(&l2_ring, eucl_norm(symbols, str_sync_symbols, 8));
+
+			  //debug message
+			  if(dist_lsf<2.0f)
+			  {
+				  char msg[64];
+				  sprintf(msg, "[Debug] LSF syncword found\n");
+				  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+
+				  //skip next 5 samples
+				  for(uint8_t j=0; j<5; j++)
+					  popU16Value(&raw_bsb_ring);
+				  i+=5;
+			  }
+		  }
+	  }
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
