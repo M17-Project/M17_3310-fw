@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.4"
+#define FW_VER					"1.0.5"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -236,7 +236,7 @@ dev_settings_t dev_settings;
 //M17
 uint16_t frame_samples[2][SYM_PER_FRA*10]; //sps=10
 int8_t frame_symbols[SYM_PER_FRA];
-lsf_t lsf;
+lsf_t lsf_rx, lsf_tx;
 uint8_t frame_cnt; //frame counter, preamble=0
 volatile uint8_t frame_pend; //frame generation pending?
 uint8_t packet_payload[33*25];
@@ -269,7 +269,12 @@ typedef struct ring
 
 volatile ring_t raw_bsb_ring;
 volatile uint16_t raw_bsb_buff[960];
-float flt_bsb_buff[960];
+float flt_bsb_buff[8*5];		//TODO: hold extra 2 samples for L2 norm minimum lookup
+float pld_symbs[SYM_PER_PLD];	//payload symbols
+uint8_t num_pld_symbs;
+
+uint8_t sample_offset;	//location of the L2 minimum
+uint8_t str_syncd;		//syncd with the incoming stream?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -382,7 +387,7 @@ float popFloatValue(volatile ring_t *ring)
     return 0.0f;
 }
 
-//baseband filtering
+//RX baseband filtering (sps=5)
 float fltSample(const uint16_t sample)
 {
 	const float gain = 18.0f*1.8f/2048.0f/sqrtf(5.0f); //gain found experimentally
@@ -402,10 +407,68 @@ float fltSample(const uint16_t sample)
 	return acc*gain;
 }
 
+//flush RX baseband filter
 void flushBsbFlt(void)
 {
 	for(uint8_t i=0; i<41; i++)
 		fltSample(0);
+}
+
+//TX baseband filtering (sps=10)
+void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], const float* flt, uint8_t phase_inv)
+{
+	static int8_t last[81]; //memory for last symbols
+
+	for(uint8_t i=0; i<SYM_PER_FRA; i++)
+	{
+		for(uint8_t j=0; j<10; j++)
+		{
+			for(uint8_t k=0; k<80; k++)
+				last[k]=last[k+1];
+
+			if(j==0)
+			{
+				if(phase_inv) //normal phase - invert the symbol stream as GBA inverts the output
+					last[80]=-in[i];
+				else
+					last[80]= in[i];
+			}
+			else
+				last[80]=0;
+
+			float acc=0.0f;
+			for(uint8_t k=0; k<81; k++)
+				acc+=last[k]*flt[k];
+
+			out[i*10+j]=DAC_IDLE+acc*250.0f;
+		}
+	}
+}
+
+//decode LSF from symbols
+//returns Viterbi error metric
+uint32_t decodeLSF(lsf_t *lsf, const float pld_symbs[SYM_PER_PLD])
+{
+	uint8_t lsf_b[30+1];
+	uint16_t soft_bit[2*SYM_PER_PLD];
+	uint16_t d_soft_bit[2*SYM_PER_PLD];
+
+	slice_symbols(soft_bit, pld_symbs);
+	randomize_soft_bits(soft_bit);
+	reorder_soft_bits(d_soft_bit, soft_bit);
+
+	uint32_t e = viterbi_decode_punctured(lsf_b, d_soft_bit, puncture_pattern_1, 2*SYM_PER_PLD, sizeof(puncture_pattern_1));
+
+	//copy over the data starting at byte 1 (byte 0 needs to be omitted)
+	memcpy(lsf->dst, &lsf_b[1+0], 6);		//DST field
+	memcpy(lsf->src, &lsf_b[1+6], 6);		//SRC field
+	lsf->type[0]=lsf_b[1+13];				//TYPE field
+	lsf->type[1]=lsf_b[1+12];
+	memcpy(lsf->meta, &lsf_b[1+14], 14);	//META field
+	lsf->crc[0]=lsf_b[1+29];				//CRC field
+	lsf->crc[1]=lsf_b[1+28];
+
+	return e; //return Viterbi error metric
 }
 
 //interrupts
@@ -2118,7 +2181,7 @@ void initRF(ch_settings_t ch_settings)
 	setRegRF(0x44, 0x00FF); //"RX voice volume", was 0x0022
 
 	//set frequency
-	sprintf(msg, "[RF module] Setting frequency to %ldHz (f_corr=%d.%d)\n",
+	sprintf(msg, "[RF module] Setting frequency to %ldHz (%+d.%dppm)\n",
 			freq, (int8_t)freq_corr, (uint8_t)fabsf(10*freq_corr) - (int8_t)fabsf((int8_t)freq_corr*10.0f));
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	setFreqRF(freq, freq_corr);
@@ -2130,37 +2193,6 @@ void shutdownRF(void)
 	char msg[128];
 	sprintf(msg, "[RF module] Shutdown\n");
 	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
-}
-
-//sps=10
-void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], const float* flt, uint8_t phase_inv)
-{
-	static int8_t last[81]; //memory for last symbols
-
-	for(uint8_t i=0; i<SYM_PER_FRA; i++)
-	{
-		for(uint8_t j=0; j<10; j++)
-		{
-			for(uint8_t k=0; k<80; k++)
-				last[k]=last[k+1];
-
-			if(j==0)
-			{
-				if(phase_inv) //normal phase - invert the symbol stream as GBA inverts the output
-					last[80]=-in[i];
-				else
-					last[80]= in[i];
-			}
-			else
-				last[80]=0;
-
-			float acc=0.0f;
-			for(uint8_t k=0; k<81; k++)
-				acc+=last[k]*flt[k];
-
-			out[i*10+j]=DAC_IDLE+acc*250.0f;
-		}
-	}
 }
 
 //memory
@@ -2382,8 +2414,8 @@ void parseUSB(uint8_t *str, uint32_t len)
 	{
 		char msg[128];
 		sprintf(msg, "[Settings] META=");
-		for(uint8_t i=0; i<sizeof(lsf.meta); i++)
-			sprintf(&msg[strlen(msg)], "%02X", lsf.meta[i]);
+		for(uint8_t i=0; i<sizeof(lsf_tx.meta); i++)
+			sprintf(&msg[strlen(msg)], "%02X", lsf_tx.meta[i]);
 		sprintf(&msg[strlen(msg)], " REF=%s\n", dev_settings.refl_name);
 		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	}
@@ -2483,7 +2515,7 @@ int main(void)
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
   HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in, batt. voltage sense)
 
-  set_LSF(&lsf, dev_settings.src_callsign, dev_settings.channel.dst,
+  set_LSF(&lsf_tx, dev_settings.src_callsign, dev_settings.channel.dst,
 		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
   setKeysTimeout(dev_settings.kbd_timeout);
 
@@ -2565,7 +2597,7 @@ int main(void)
 			  /*encode_callsign_bytes(&lsf.meta[0], (uint8_t*)dev_settings.refl_name);
 			  //encode_callsign_bytes(&lsf.meta[6], (uint8_t*)"");
 			  update_LSF_CRC(&lsf);*/
-			  gen_frame_i8(frame_symbols, lsf.meta, FRAME_LSF, &lsf, 0, 0);
+			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
 			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
 		  }
 		  else
@@ -2581,7 +2613,7 @@ int main(void)
 				  else
 					  payload[25] = 0x80 | ((bytes_left)<<2);
 
-				  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf, 0, 0);
+				  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
 				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
 			  }
 
@@ -2629,30 +2661,78 @@ int main(void)
 	  {
 		  for(uint16_t i=0; i<num_samples; i++)
 		  {
-			  //consume sample
-			  for(uint16_t j=0; j<8*5-1; j++)
-				  flt_bsb_buff[j]=flt_bsb_buff[j+1];
-			  flt_bsb_buff[8*5-1] = -fltSample(popU16Value(&raw_bsb_ring));
-
-			  //L2 norm check against syncword
-			  float symbols[8];
-			  for(uint8_t j=0; j<8; j++)
-				  symbols[j]=flt_bsb_buff[j*5];
-
-			  float dist_lsf = eucl_norm(symbols, lsf_sync_symbols, 8);
-			  //pushFloatValue(&l2_ring, eucl_norm(symbols, str_sync_symbols, 8));
-
-			  //debug message
-			  if(dist_lsf<2.0f)
+			  if(!str_syncd)
 			  {
-				  char msg[64];
-				  sprintf(msg, "[Debug] LSF syncword found\n");
-				  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+				  //consume sample
+				  for(uint16_t j=0; j<arrlen(flt_bsb_buff)-1; j++)
+					  flt_bsb_buff[j]=flt_bsb_buff[j+1];
+				  flt_bsb_buff[arrlen(flt_bsb_buff)-1] = -fltSample(popU16Value(&raw_bsb_ring));
 
-				  //skip next 5 samples
-				  for(uint8_t j=0; j<5; j++)
+				  //L2 norm check against syncword
+				  float symbols[8];
+				  for(uint8_t j=0; j<8; j++)
+					  symbols[j]=flt_bsb_buff[j*5];
+
+				  //debug message
+				  float dist_lsf=eucl_norm(symbols, lsf_sync_symbols, 8);
+				  if(dist_lsf<4.5f)
+				  {
+					  //find L2 minimum
+					  /*sample_offset=0;
+					  for(uint8_t j=1; j<=2; j++)
+					  {
+						  for(uint8_t k=0; k<8; k++)
+							  symbols[k]=flt_bsb_buff[k*5+j];
+						  if(eucl_norm(symbols, lsf_sync_symbols, 8)<dist_lsf)
+							  sample_offset=j;
+					  }*/
+
+					  /*char msg[64];
+					  sprintf(msg, "[Debug] LSF syncword found at offset %d\n", sample_offset);
+					  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+					  str_syncd=1;
+				  }
+			  }
+			  else
+			  {
+				  //omit the remaining syncword samples
+				  //for(uint8_t i=0; i<2; i++)
+					  //fltSample(popU16Value(&raw_bsb_ring));
+
+				  //push sample to symbols buffer
+				  pld_symbs[num_pld_symbs] = -fltSample(popU16Value(&raw_bsb_ring));
+				  num_pld_symbs++;
+
+				  //omit 4 samples
+				  for(uint8_t i=0; i<4; i++)
 					  fltSample(popU16Value(&raw_bsb_ring));
-				  i+=5;
+				  i+=4;
+
+				  if(num_pld_symbs==SYM_PER_PLD)
+				  {
+					  /*uint32_t e = */decodeLSF(&lsf_rx, pld_symbs);
+					  //float err = (float)e/0xFFFFU;
+
+					  uint8_t call_dst[10], call_src[10], can;
+					  decode_callsign_bytes(call_dst, lsf_rx.dst);
+					  decode_callsign_bytes(call_src, lsf_rx.src);
+					  can=(*((uint16_t*)lsf_rx.type)>>7)&0xFU;
+
+					  //if CRC matches data
+					  if(LSF_CRC(&lsf_rx)==*((uint16_t*)&lsf_rx.crc))
+					  {
+						  char msg[128]={0};
+						  sprintf(msg, "[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: ",
+								  call_src, call_dst, (lsf_rx.type[0]<<8)|lsf_rx.type[1], can);
+						  for(uint8_t j=0; j<14; j++)
+							  sprintf(&msg[strlen(msg)], "%02X", lsf_rx.meta[j]);
+						  sprintf(&msg[strlen(msg)], "\n");
+						  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+					  }
+
+					  num_pld_symbs=0;
+					  str_syncd=0;
+				  }
 			  }
 		  }
 	  }
