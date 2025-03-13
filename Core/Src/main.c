@@ -445,32 +445,6 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 	}
 }
 
-//decode LSF from symbols
-//returns Viterbi error metric
-uint32_t decodeLSF(lsf_t *lsf, const float pld_symbs[SYM_PER_PLD])
-{
-	uint8_t lsf_b[30+1];
-	uint16_t soft_bit[2*SYM_PER_PLD];
-	uint16_t d_soft_bit[2*SYM_PER_PLD];
-
-	slice_symbols(soft_bit, pld_symbs);
-	randomize_soft_bits(soft_bit);
-	reorder_soft_bits(d_soft_bit, soft_bit);
-
-	uint32_t e = viterbi_decode_punctured(lsf_b, d_soft_bit, puncture_pattern_1, 2*SYM_PER_PLD, sizeof(puncture_pattern_1));
-
-	//copy over the data starting at byte 1 (byte 0 needs to be omitted)
-	memcpy(lsf->dst, &lsf_b[1+0], 6);		//DST field
-	memcpy(lsf->src, &lsf_b[1+6], 6);		//SRC field
-	lsf->type[0]=lsf_b[1+13];				//TYPE field
-	lsf->type[1]=lsf_b[1+12];
-	memcpy(lsf->meta, &lsf_b[1+14], 14);	//META field
-	lsf->crc[0]=lsf_b[1+29];				//CRC field
-	lsf->crc[1]=lsf_b[1+28];
-
-	return e; //return Viterbi error metric
-}
-
 //interrupts
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -2710,7 +2684,7 @@ int main(void)
 
 				  if(num_pld_symbs==SYM_PER_PLD)
 				  {
-					  /*uint32_t e = */decodeLSF(&lsf_rx, pld_symbs);
+					  /*uint32_t e = */decode_LSF(&lsf_rx, pld_symbs);
 					  //float err = (float)e/0xFFFFU;
 
 					  uint8_t call_dst[10], call_src[10], can;
