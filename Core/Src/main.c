@@ -2688,16 +2688,19 @@ int main(void)
 					  //float err = (float)e/0xFFFFU;
 
 					  uint8_t call_dst[10], call_src[10], can;
+					  uint16_t type, crc;
 					  decode_callsign_bytes(call_dst, lsf_rx.dst);
 					  decode_callsign_bytes(call_src, lsf_rx.src);
-					  can=(*((uint16_t*)lsf_rx.type)>>7)&0xFU;
+					  type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
+					  can=(type>>7)&0xFU;
+					  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
 
 					  //if CRC matches data
-					  if(LSF_CRC(&lsf_rx)==*((uint16_t*)&lsf_rx.crc))
+					  if(LSF_CRC(&lsf_rx)==crc)
 					  {
 						  char msg[128]={0};
 						  sprintf(msg, "[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: ",
-								  call_src, call_dst, (lsf_rx.type[0]<<8)|lsf_rx.type[1], can);
+								  call_src, call_dst, type, can);
 						  for(uint8_t j=0; j<14; j++)
 							  sprintf(&msg[strlen(msg)], "%02X", lsf_rx.meta[j]);
 						  sprintf(&msg[strlen(msg)], "\n");
