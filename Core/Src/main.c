@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.5"
+#define FW_VER					"1.0.6"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
