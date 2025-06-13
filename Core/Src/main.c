@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.6"
+#define FW_VER					"1.0.7"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -121,7 +121,7 @@ typedef enum key
 	KEY_ASTERISK,
 	KEY_0,
 	KEY_HASH
-} key_t;
+} kbd_key_t;
 
 //settings
 typedef enum ch_bw
@@ -850,6 +850,8 @@ void initTextTX(const char *message)
 	packet_payload[msg_len+2] = crc>>8;
 	packet_payload[msg_len+3] = crc&0xFF;
 
+	memset(&packet_payload[msg_len+4], 0, sizeof(packet_payload)-(msg_len+4));
+
 	packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
 
 	radio_state = RF_TX;
@@ -859,9 +861,9 @@ void initTextTX(const char *message)
 }
 
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
-key_t scanKeys(uint8_t rep)
+kbd_key_t scanKeys(uint8_t rep)
 {
-	key_t key = KEY_NONE;
+	kbd_key_t key = KEY_NONE;
 
 	//PD2 down means KEY_OK is pressed
 	if(BTN_OK_GPIO_Port->IDR & BTN_OK_Pin)
@@ -936,7 +938,7 @@ key_t scanKeys(uint8_t rep)
 	return key;
 }
 
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings, key_t key)
+void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings, kbd_key_t key)
 {
 	//backlight on
 	if(key!=KEY_NONE && dev_settings->backlight_always==0)
