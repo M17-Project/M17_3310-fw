@@ -41,7 +41,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.7"
+#define FW_VER					"1.0.8"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -89,11 +89,12 @@ uint8_t disp_buff[DISP_BUFF_SIZ];
 //some typedefs
 typedef enum text_entry
 {
-	TEXT_T9,
-    TEXT_NORM
+    TEXT_LOWERCASE,
+	TEXT_UPPERCASE,
+	TEXT_T9
 } text_entry_t;
 
-text_entry_t text_mode = TEXT_NORM;
+text_entry_t text_mode = TEXT_LOWERCASE;
 
 //menus state machine
 #include "menus.h"
@@ -141,6 +142,39 @@ typedef enum rf_power
 	RF_PWR_LOW,
 	RF_PWR_HIGH
 } rf_power_t;
+
+//key maps
+//lowercase
+const char key_map_lc[11][8] =
+{
+	".,?!1", //KEY_1
+	"abc2", //KEY_2
+	"def3", //KEY_3
+	"ghi4", //KEY_4
+	"jkl5", //KEY_5
+	"mno6", //KEY_6
+	"pqrs7", //KEY_7
+	"tuv8", //KEY_8
+	"wxyz9", //KEY_9
+	"*+-=/", //KEY_ASTERISK
+	" 0", //KEY_0
+};
+
+//uppercase
+const char key_map_uc[11][8] =
+{
+	".,?!1", //KEY_1
+	"ABC2", //KEY_2
+	"DEF3", //KEY_3
+	"GHI4", //KEY_4
+	"JKL5", //KEY_5
+	"MNO6", //KEY_6
+	"PQRS7", //KEY_7
+	"TUV8", //KEY_8
+	"WXYZ9", //KEY_9
+	"*+-=/", //KEY_ASTERISK
+	" 0", //KEY_0
+};
 
 //text/T9 related variables
 volatile char code[15]="";
@@ -795,10 +829,12 @@ void showTextMessageEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
 {
 	dispClear(buff, 0);
 
-    if(text_mode==TEXT_T9)
-		setString(buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
-	else
+	if(text_mode==TEXT_LOWERCASE)
 		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
+	else if(text_mode==TEXT_UPPERCASE)
+		setString(buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
+	else //if (text_mode==TEXT_T9)
+		setString(buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
 
 	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
 }
@@ -936,6 +972,72 @@ kbd_key_t scanKeys(uint8_t rep)
 	}
 
 	return key;
+}
+
+//push a character into the text message buffer
+void pushCharBuffer(const char key_map[][8], kbd_key_t key)
+{
+	key -= KEY_1; //start indexing at 0
+	char *key_chars = (char*)key_map[key];
+	uint8_t map_len = strlen(key_chars);
+	uint8_t new = 1;
+
+	HAL_TIM_Base_Stop(&htim7);
+	pos=strlen(message);
+	char *last = &message[pos>0 ? pos-1 : 0];
+
+	if(TIM7->CNT>0)
+	{
+		for(uint8_t i=0; i<map_len; i++)
+		{
+			if(*last==key_chars[i])
+			{
+				*last=key_chars[(i+1)%map_len];
+				new = 0;
+				break;
+			}
+		}
+
+		if(new)
+		{
+			message[pos] = key_chars[0];
+			if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
+			{
+				pos++;
+			}
+		}
+	}
+	else
+	{
+		message[pos] = key_chars[0];
+		if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
+		{
+			pos++;
+		}
+	}
+
+	TIM7->CNT=0;
+	HAL_TIM_Base_Start_IT(&htim7);
+}
+
+//push characted for T9 code
+void pushCharT9(kbd_key_t key)
+{
+	char c;
+	if(key!=KEY_ASTERISK)
+		c = '2'+key-KEY_2;
+	else
+		c = '*';
+	char *w = addCode((char*)code, c);
+
+	if(strlen(w)!=0)
+	{
+		strcpy(&message[pos], w);
+	}
+	else if(key!=KEY_ASTERISK)
+	{
+		message[strlen(message)]='?';
+	}
 }
 
 void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings, kbd_key_t key)
@@ -1218,96 +1320,30 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_1:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					if(*last=='.')
-						*last=',';
-					else if(*last==',')
-						*last='\'';
-					else if(*last=='\'')
-						*last='!';
-					else if(*last=='!')
-						*last='?';
-					else if(*last=='?')
-						*last='1';
-					else if(*last=='1')
-						*last='.';
-					else
-						message[pos] = '.';
-				}
-				else
-				{
-					message[pos] = '.';
-				}
-
-				memset((char*)code, 0, strlen((char*)code));
+				pushCharBuffer(key_map_lc, key); //lowercase=uppercase for this key
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
 				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				if(strlen((char*)code)>0)
+					memset((char*)code, 0, strlen((char*)code));
 			}
 		break;
 
 		case KEY_2:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '2');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('a'):
-								*last = 'b';
-							break;
-
-							case('b'):
-								*last = 'c';
-							break;
-
-							case('c'):
-								*last = '2';
-							break;
-
-							case('2'):
-								*last = 'a';
-							break;
-
-							default:
-								message[pos] = 'a';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'a';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1318,57 +1354,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_3:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '3');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('d'):
-								*last = 'e';
-							break;
-
-							case('e'):
-								*last = 'f';
-							break;
-
-							case('f'):
-								*last = '3';
-							break;
-
-							case('3'):
-								*last = 'd';
-							break;
-
-							default:
-								message[pos] = 'd';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'd';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1379,57 +1375,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_4:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '4');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('g'):
-								*last = 'h';
-							break;
-
-							case('h'):
-								*last = 'i';
-							break;
-
-							case('i'):
-								*last = '4';
-							break;
-
-							case('4'):
-								*last = 'g';
-							break;
-
-							default:
-								message[pos] = 'g';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'g';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1440,57 +1396,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_5:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '5');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('j'):
-								*last = 'k';
-							break;
-
-							case('k'):
-								*last = 'l';
-							break;
-
-							case('l'):
-								*last = '5';
-							break;
-
-							case('5'):
-								*last = 'j';
-							break;
-
-							default:
-								message[pos] = 'j';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'j';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1501,57 +1417,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_6:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '6');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('m'):
-								*last = 'n';
-							break;
-
-							case('n'):
-								*last = 'o';
-							break;
-
-							case('o'):
-								*last = '6';
-							break;
-
-							case('6'):
-								*last = 'm';
-							break;
-
-							default:
-								message[pos] = 'm';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'm';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1562,61 +1438,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_7:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '7');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('p'):
-								*last = 'q';
-							break;
-
-							case('q'):
-								*last = 'r';
-							break;
-
-							case('r'):
-								*last = 's';
-							break;
-
-							case('s'):
-								*last = '7';
-							break;
-
-							case('7'):
-								*last = 'p';
-							break;
-
-							default:
-								message[pos] = 'p';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'p';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1627,57 +1459,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_8:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '8');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('t'):
-								*last = 'u';
-							break;
-
-							case('u'):
-								*last = 'v';
-							break;
-
-							case('v'):
-								*last = '8';
-							break;
-
-							case('8'):
-								*last = 't';
-							break;
-
-							default:
-								message[pos] = 't';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 't';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1688,61 +1480,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_9:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '9');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
-					else
-					{
-						message[strlen(message)]='?';
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('w'):
-								*last = 'x';
-							break;
-
-							case('x'):
-								*last = 'y';
-							break;
-
-							case('y'):
-								*last = 'z';
-							break;
-
-							case('z'):
-								*last = '9';
-							break;
-
-							case('9'):
-								*last = 'w';
-							break;
-
-							default:
-								message[pos] = 'w';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = 'w';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1753,45 +1501,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_ASTERISK:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
+				if(*text_mode==TEXT_LOWERCASE)
 				{
-					char *w = addCode((char*)code, '*');
-
-					if(strlen(w)!=0)
-					{
-						strcpy(&message[pos], w);
-					}
+					pushCharBuffer(key_map_lc, key);
 				}
-				else
+				else if (*text_mode==TEXT_UPPERCASE)
 				{
-					HAL_TIM_Base_Stop(&htim7);
-					pos=strlen(message);
-					char *last = &message[pos>0 ? pos-1 : 0];
-
-					if(TIM7->CNT>0)
-					{
-						switch(*last)
-						{
-							case('*'):
-								*last = '+';
-							break;
-
-							case('+'):
-								*last = '*';
-							break;
-
-							default:
-								message[pos] = '*';
-							break;
-						}
-					}
-					else
-					{
-						message[pos] = '*';
-					}
-
-					TIM7->CNT=0;
-					HAL_TIM_Base_Start_IT(&htim7);
+					pushCharBuffer(key_map_uc, key);
+				}
+				else //(*text_mode==TEXT_T9)
+				{
+					pushCharT9(key);
 				}
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -1802,60 +1522,34 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		case KEY_0:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				HAL_TIM_Base_Stop(&htim7);
-				pos=strlen(message);
-				char *last = &message[pos>0 ? pos-1 : 0];
-
-				if(TIM7->CNT>0)
-				{
-					switch(*last)
-					{
-						case(' '):
-							*last = '0';
-						break;
-
-						case('0'):
-							*last = ' ';
-						break;
-
-						default:
-							message[pos] = ' ';
-							if(*text_mode==TEXT_T9)
-								pos++;
-						break;
-					}
-				}
-				else
-				{
-					message[pos] = ' ';
-					if(*text_mode==TEXT_T9)
-						pos++;
-				}
-
-				TIM7->CNT=0;
-				HAL_TIM_Base_Start_IT(&htim7);
+				pushCharBuffer(key_map_lc, key);
 
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
 				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
 
-				memset((char*)code, 0, strlen((char*)code));
+				if(strlen((char*)code)>0)
+					memset((char*)code, 0, strlen((char*)code));
 			}
 		break;
 
 		case KEY_HASH:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_T9)
-					*text_mode = TEXT_NORM;
-				else
+				if(*text_mode==TEXT_LOWERCASE)
+					*text_mode = TEXT_UPPERCASE;
+				else if(*text_mode==TEXT_UPPERCASE)
 					*text_mode = TEXT_T9;
+				else
+					*text_mode = TEXT_LOWERCASE;
 
 				drawRect(buff, 0, 0, 15, 8, 1, 1);
 
-				if(*text_mode==TEXT_T9)
-					setString(buff, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
-				else
+				if(*text_mode==TEXT_LOWERCASE)
 					setString(buff, 0, 0, &nokia_small, (char*)"abc", 0, ALIGN_LEFT);
+				else if(*text_mode==TEXT_UPPERCASE)
+					setString(buff, 0, 0, &nokia_small, (char*)"ABC", 0, ALIGN_LEFT);
+				else
+					setString(buff, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
 			}
 		break;
 
