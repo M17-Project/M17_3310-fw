@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <stdarg.h>
 #include <math.h>
 
 #include "usbd_cdc_if.h"
@@ -41,7 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.0.8"
+#define FW_VER					"1.0.9"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -335,6 +336,19 @@ void chBwRF(ch_bw_t bw);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+//debug print
+void dbg_print(const char* fmt, ...)
+{
+	char str[1024];
+	va_list ap;
+
+	va_start(ap, fmt);
+	vsprintf(str, fmt, ap);
+	va_end(ap);
+
+	CDC_Transmit_FS((uint8_t*)str, strlen(str));
+}
+
 //ring buffer functions
 void initRing(volatile ring_t *ring, volatile void *buffer, uint16_t size)
 {
@@ -1057,14 +1071,11 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		}
 	}
 
-	char msg[128];
-
 	//do something based on the key pressed and current state
 	switch(key)
 	{
 		case KEY_OK:
-			sprintf(msg, "[Debug] Start disp_state: %d\n", *disp_state);
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
 
 			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
@@ -1080,9 +1091,6 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			{
 				//find out where to go next
 				uint8_t item=menu_pos+menu_pos_hl;
-
-				if(menu->next_state[item] != DISP_NONE)
-					*disp_state = menu->next_state[item];
 
 				if(item==0) //"Messaging"
 				{
@@ -1101,6 +1109,22 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 						menu = (menu_t*)menu->next_menu[item];
 						showMenu(buff, *menu, 0, 0);
 					}
+				}
+			}
+
+			//M17 settings
+			else if(*disp_state==DISP_M17_SETTINGS)
+			{
+				//find out where to go next
+				uint8_t item=menu_pos+menu_pos_hl;
+
+				if(item==0) //"Callsign"
+				{
+					;
+				}
+				else
+				{
+					;
 				}
 			}
 
@@ -1137,15 +1161,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				;
 			}
 
-			sprintf(msg, "[Debug] End disp_state: %d\n", *disp_state);
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
 		break;
 
 		case KEY_C:
 			menu_pos=menu_pos_hl=0;
 
-			sprintf(msg, "[Debug] Start disp_state: %d\n", *disp_state);
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
 
 			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
@@ -1184,8 +1206,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				showMenu(buff, *menu, 0, 0);
 			}
 
-			sprintf(msg, "[Debug] End disp_state: %d\n", *disp_state);
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
 		break;
 
 		case KEY_LEFT:
@@ -1575,9 +1596,7 @@ uint8_t setRegRF(uint8_t reg, uint16_t val)
 	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
 	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 4, 50);
 
-	/*char msg[128];
-	sprintf(msg, "[RF module] POKE %02X %04X reply: %s\n", reg, val, rcv);
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+	//dbg_print("[RF module] POKE %02X %04X reply: %s\n", reg, val, rcv);
 
 	if(strcmp(rcv, "OK\r\n")==0)
 		return 0;
@@ -1593,9 +1612,7 @@ uint16_t getRegRF(uint8_t reg)
 	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
 	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 64, 10);
 
-	/*char msg[128];
-	sprintf(msg, "[RF module] PEEK %02X reply: %s\n", reg, rcv);
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+	//dbg_print("[RF module] PEEK %02X reply: %s\n", reg, rcv);
 
 	return atoi(rcv);
 }
@@ -1733,7 +1750,6 @@ void initRF(ch_settings_t ch_settings)
 	rf_mode_t mode = ch_settings.mode;
 	rf_power_t pwr = ch_settings.rf_pwr;
 
-	char msg[128]; //debug
 	uint8_t data[64]={0};
 
 	//PTT off
@@ -1757,15 +1773,13 @@ void initRF(ch_settings_t ch_settings)
 	if(len)
 	{
 		data[strlen((char*)data)-2]=0;
-		sprintf(msg, "[RF module] Version: %s\n", data);
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+		dbg_print("[RF module] Version: %s\n", data);
 	}
 	else
-		CDC_Transmit_FS((uint8_t*)"[RF module] Nothing received\n", 30);
+		dbg_print("[RF module] Nothing received\n");
 
 	//SA868S (AT1846S) init sequence (thx, edgetriggered)
-	sprintf(msg, "[RF module] Init sequence start\n");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	dbg_print("[RF module] Init sequence start\n");
 
 	setRegRF(0x30, 0x0001);	//Soft reset
 	HAL_Delay(160);
@@ -1837,13 +1851,11 @@ void initRF(ch_settings_t ch_settings)
 	setRegRF(0x40, 0x0031);
 
 	//set mode
-	sprintf(msg, "[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"M17":"FM");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	dbg_print("[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"M17":"FM");
 	setModeRF(mode);
 
 	//set bandwidth
-	sprintf(msg, "[RF module] Setting bandwidth to %skHz\n", (bw==RF_BW_12K5)?"12.5":"25");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	dbg_print("[RF module] Setting bandwidth to %skHz\n", (bw==RF_BW_12K5)?"12.5":"25");
 	chBwRF(bw);
 
 	//some additional registers
@@ -1851,25 +1863,20 @@ void initRF(ch_settings_t ch_settings)
 	setRegRF(0x44, 0x00FF); //"RX voice volume", was 0x0022
 
 	//set frequency
-	sprintf(msg, "[RF module] Setting frequency to %ldHz (%+d.%dppm)\n",
+	dbg_print("[RF module] Setting frequency to %ldHz (%+d.%dppm)\n",
 			freq, (int8_t)freq_corr, (uint8_t)fabsf(10*freq_corr) - (int8_t)fabsf((int8_t)freq_corr*10.0f));
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
 	setFreqRF(freq, freq_corr);
 }
 
 void shutdownRF(void)
 {
 	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
-	char msg[128];
-	sprintf(msg, "[RF module] Shutdown\n");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	dbg_print("[RF module] Shutdown\n");
 }
 
 //memory
 uint8_t eraseSector(void)
 {
-	char msg[128];
-
 	if(HAL_FLASH_Unlock()==HAL_OK)
 	{
 		FLASH_EraseInitTypeDef erase =
@@ -1886,29 +1893,24 @@ uint8_t eraseSector(void)
 
 		if(ret==HAL_OK && sector_error==0xFFFFFFFFU) //successful erase
 		{
-			sprintf(msg, "[NVMEM] Sector erased.\n");
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			dbg_print("[NVMEM] Sector erased.\n");
 			HAL_FLASH_Lock();
 
 			return 0;
 		}
 
-		sprintf(msg, "[NVMEM] Sector erasure error.\n");
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+		dbg_print("[NVMEM] Sector erasure error.\n");
 
 		return 1;
 	}
 
-	sprintf(msg, "[NVMEM] Error unlocking Flash memory.\n");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	dbg_print("[NVMEM] Error unlocking Flash memory.\n");
 
 	return 1;
 }
 
 uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size)
 {
-	char msg[128];
-
 	if(eraseSector()==0) //erase ok
 	{
 		if(HAL_FLASH_Unlock()==HAL_OK) //unlock ok
@@ -1918,20 +1920,17 @@ uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size)
 
 			HAL_FLASH_Lock();
 
-			sprintf(msg, "[NVMEM] Data saved.\n");
-			CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			dbg_print("[NVMEM] Data saved.\n");
 
 			return 0;
 		}
 
-		sprintf(msg, "[NVMEM] Error unlocking Flash memory.\n");
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+		dbg_print("[NVMEM] Error unlocking Flash memory.\n");
 
 		return 1;
 	}
 
-	sprintf(msg, "[NVMEM] Sector erasure error.\n");
-	CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+	dbg_print("[NVMEM] Sector erasure error.\n");
 
 	return 1;
 }
@@ -1939,8 +1938,6 @@ uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size)
 //device settings
 void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings)
 {
-	char msg[128];
-
 	//if the memory is uninitialized
 	if(*((uint32_t*)MEM_START)==0xFFFFFFFFU)
 	{
@@ -1948,10 +1945,9 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 		uint8_t ret = saveData(def_dev_settings, MEM_START, sizeof(dev_settings_t));
 
 		if(ret==0)
-			sprintf(msg, "[NVMEM] Default device settings loaded.\n");
+			dbg_print("[NVMEM] Default device settings loaded.\n");
 		else
-			sprintf(msg, "[NVMEM] Error saving default device settings.\n");
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			dbg_print("[NVMEM] Error saving default device settings.\n");
 	}
 
 	//if settings are available in the memory
@@ -1959,8 +1955,7 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 	{
 		memcpy((uint8_t*)dev_settings, (uint8_t*)MEM_START, sizeof(dev_settings_t));
 
-		sprintf(msg, "[NVMEM] Device settings loaded.\n");
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+		dbg_print("[NVMEM] Device settings loaded.\n");
 	}
 
 	//load settings into menus
@@ -2020,9 +2015,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	else if(strstr((char*)str, "peek")==(char*)str)
 	{
 		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
-		char msg[128];
-		sprintf(msg, "%08lX -> 0x%02X\n", addr, *((uint8_t*)addr));
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+		dbg_print("%08lX -> 0x%02X\n", addr, *((uint8_t*)addr));
 	}
 
 	//write byte to the Flash memory (use with caution)
@@ -2036,9 +2029,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr, (uint64_t)val);
 		HAL_FLASH_Lock();
 
-		char msg[128];
-		sprintf(msg, "%08lX <- 0x%02X\n", addr, val);
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+		dbg_print("%08lX <- 0x%02X\n", addr, val);
 	}
 
 	//load settings from nvmem
@@ -2082,12 +2073,10 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//get LSF META field
 	else if(strstr((char*)str, "meta")==(char*)str)
 	{
-		char msg[128];
-		sprintf(msg, "[Settings] META=");
+		dbg_print("[Settings] META=");
 		for(uint8_t i=0; i<sizeof(lsf_tx.meta); i++)
-			sprintf(&msg[strlen(msg)], "%02X", lsf_tx.meta[i]);
-		sprintf(&msg[strlen(msg)], " REF=%s\n", dev_settings.refl_name);
-		CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+			dbg_print("%02X", lsf_tx.meta[i]);
+		dbg_print(" REF=%s\n", dev_settings.refl_name);
 	}
 
 	//simple echo
@@ -2357,9 +2346,7 @@ int main(void)
 							  sample_offset=j;
 					  }*/
 
-					  /*char msg[64];
-					  sprintf(msg, "[Debug] LSF syncword found at offset %d\n", sample_offset);
-					  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));*/
+					  //dbg_print("[Debug] LSF syncword found at offset %d\n", sample_offset);
 					  str_syncd=1;
 				  }
 			  }
@@ -2394,13 +2381,11 @@ int main(void)
 					  //if CRC matches data
 					  if(LSF_CRC(&lsf_rx)==crc)
 					  {
-						  char msg[128]={0};
-						  sprintf(msg, "[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: ",
+						  dbg_print("[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: ",
 								  call_src, call_dst, type, can);
 						  for(uint8_t j=0; j<14; j++)
-							  sprintf(&msg[strlen(msg)], "%02X", lsf_rx.meta[j]);
-						  sprintf(&msg[strlen(msg)], "\n");
-						  CDC_Transmit_FS((uint8_t*)msg, strlen(msg));
+							  dbg_print("%02X", lsf_rx.meta[j]);
+						  dbg_print("\n");
 					  }
 
 					  num_pld_symbs=0;

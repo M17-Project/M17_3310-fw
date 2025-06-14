@@ -142,12 +142,12 @@ menu_t m17_settings =
 menu_t info_menu =
 {
 	"Info",
-	2,
+	3,
 
-	{"Version", "Author"},
-	{FW_VER, "SP5WWP"},
-	{DISP_NONE, DISP_NONE},
-	{NULL, NULL},
+	{"FW ver.", "Author", "libm17 ver."},
+	{FW_VER, "SP5WWP", LIBM17_VERSION},
+	{DISP_NONE, DISP_NONE, DISP_NONE},
+	{NULL, NULL, NULL},
 
 	DISP_MAIN_MENU,
 	&main_menu
