@@ -42,7 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.1.1"
+#define FW_VER					"1.1.2"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -145,7 +145,7 @@ typedef enum rf_power
 
 //key maps
 //lowercase
-const char key_map_lc[11][14] =
+const char key_map_lc[11][15] =
 {
 	".,?!'\"-+()@/:1", //KEY_1
 	"abc2", //KEY_2
@@ -161,7 +161,7 @@ const char key_map_lc[11][14] =
 };
 
 //uppercase
-const char key_map_uc[11][14] =
+const char key_map_uc[11][15] =
 {
 	".,?!'\"-+()@/:1", //KEY_1
 	"ABC2", //KEY_2
@@ -998,7 +998,7 @@ kbd_key_t scanKeys(uint8_t rep)
 }
 
 //push a character into the text message buffer
-void pushCharBuffer(const char key_map[][14], kbd_key_t key)
+void pushCharBuffer(const char key_map[][sizeof(key_map_lc[0])], kbd_key_t key)
 {
 	key -= KEY_1; //start indexing at 0
 	char *key_chars = (char*)key_map[key];
@@ -1157,6 +1157,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 					HAL_Delay(100);
 				}
 				dbg_print("\n");*/
+
+				memset(text_entry, 0, strlen(text_entry));
 
 				*disp_state = DISP_MAIN_SCR;
 				showMainScreen(buff);
