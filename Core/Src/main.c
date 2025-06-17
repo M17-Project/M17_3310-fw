@@ -42,7 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.1"
+#define FW_VER					"1.1.1"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -145,9 +145,9 @@ typedef enum rf_power
 
 //key maps
 //lowercase
-const char key_map_lc[11][8] =
+const char key_map_lc[11][14] =
 {
-	".,?!1", //KEY_1
+	".,?!'\"-+()@/:1", //KEY_1
 	"abc2", //KEY_2
 	"def3", //KEY_3
 	"ghi4", //KEY_4
@@ -156,14 +156,14 @@ const char key_map_lc[11][8] =
 	"pqrs7", //KEY_7
 	"tuv8", //KEY_8
 	"wxyz9", //KEY_9
-	"*+-=/", //KEY_ASTERISK
+	"*=#", //KEY_ASTERISK
 	" 0", //KEY_0
 };
 
 //uppercase
-const char key_map_uc[11][8] =
+const char key_map_uc[11][14] =
 {
-	".,?!1", //KEY_1
+	".,?!'\"-+()@/:1", //KEY_1
 	"ABC2", //KEY_2
 	"DEF3", //KEY_3
 	"GHI4", //KEY_4
@@ -172,13 +172,13 @@ const char key_map_uc[11][8] =
 	"PQRS7", //KEY_7
 	"TUV8", //KEY_8
 	"WXYZ9", //KEY_9
-	"*+-=/", //KEY_ASTERISK
+	"*=#", //KEY_ASTERISK
 	" 0", //KEY_0
 };
 
 //text/T9 related variables
 volatile char code[15]="";
-char message[256]=""; //this handles all kinds of text entry
+char text_entry[256]=""; //this handles all kinds of text entry
 volatile uint8_t pos=0;
 
 //usb-related
@@ -331,6 +331,7 @@ void setRF(radio_state_t state);
 void setFreqRF(uint32_t freq, float corr);
 void setBacklight(uint8_t level);
 void chBwRF(ch_bw_t bw);
+uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -997,7 +998,7 @@ kbd_key_t scanKeys(uint8_t rep)
 }
 
 //push a character into the text message buffer
-void pushCharBuffer(const char key_map[][8], kbd_key_t key)
+void pushCharBuffer(const char key_map[][14], kbd_key_t key)
 {
 	key -= KEY_1; //start indexing at 0
 	char *key_chars = (char*)key_map[key];
@@ -1005,8 +1006,8 @@ void pushCharBuffer(const char key_map[][8], kbd_key_t key)
 	uint8_t new = 1;
 
 	HAL_TIM_Base_Stop(&htim7);
-	pos=strlen(message);
-	char *last = &message[pos>0 ? pos-1 : 0];
+	pos=strlen(text_entry);
+	char *last = &text_entry[pos>0 ? pos-1 : 0];
 
 	if(TIM7->CNT>0)
 	{
@@ -1022,7 +1023,7 @@ void pushCharBuffer(const char key_map[][8], kbd_key_t key)
 
 		if(new)
 		{
-			message[pos] = key_chars[0];
+			text_entry[pos] = key_chars[0];
 			if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
 			{
 				pos++;
@@ -1031,7 +1032,7 @@ void pushCharBuffer(const char key_map[][8], kbd_key_t key)
 	}
 	else
 	{
-		message[pos] = key_chars[0];
+		text_entry[pos] = key_chars[0];
 		if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
 		{
 			pos++;
@@ -1054,11 +1055,11 @@ void pushCharT9(kbd_key_t key)
 
 	if(strlen(w)!=0)
 	{
-		strcpy(&message[pos], w);
+		strcpy(&text_entry[pos], w);
 	}
 	else if(key!=KEY_ASTERISK)
 	{
-		message[strlen(message)]='?';
+		text_entry[strlen(text_entry)]='?';
 	}
 }
 
@@ -1108,7 +1109,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				{
 					*disp_state = next_disp;
 					//clear message and display text entry screen
-					memset(message, 0, strlen(message));
+					memset(text_entry, 0, strlen(text_entry));
 					showTextMessageEntry(buff, *text_mode);
 				}
 				else
@@ -1134,8 +1135,31 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				//initialize packet transmission
 				if(*radio_state==RF_RX)
 				{
-					initTextTX(message);
+					initTextTX(text_entry);
 				}
+			}
+
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				//TODO: fix this
+				//find out which setting is being edited
+				;
+
+				//example - SRC
+				//strcpy(dev_settings->src_callsign, text_entry);
+				//saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
+
+				/*dbg_print("src: %s\n", dev_settings->src_callsign);
+				HAL_Delay(100);
+				for(uint8_t i=0; i<sizeof(dev_settings_t); i++)
+				{
+					dbg_print("%02X ", *((uint8_t*)dev_settings+i));
+					HAL_Delay(100);
+				}
+				dbg_print("\n");*/
+
+				*disp_state = DISP_MAIN_SCR;
+				showMainScreen(buff);
 			}
 
 			//settings, info or debug
@@ -1182,14 +1206,14 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
 				//backspace
-				if(strlen(message)>0)
+				if(strlen(text_entry)>0)
 				{
-					memset(&message[strlen(message)-1], 0, sizeof(message)-strlen(message));
-					pos=strlen(message);
+					memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
+					pos=strlen(text_entry);
 					memset((char*)code, 0, strlen((char*)code));
 
 					drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-					setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+					setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 				}
 				else
 				{
@@ -1198,10 +1222,24 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 				}
 			}
 
+			//text value entry
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				*disp_state = next_disp;
-				showMainScreen(buff);
+				//backspace
+				if(strlen(text_entry)>0)
+				{
+					memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
+					pos=strlen(text_entry);
+					memset((char*)code, 0, strlen((char*)code));
+
+					drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+					setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				}
+				else
+				{
+					*disp_state = next_disp;
+					showMainScreen(buff);
+				}
 			}
 
 			//anything else
@@ -1296,8 +1334,10 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				pos=strlen(message);
+				pos=strlen(text_entry);
 				memset((char*)code, 0, strlen((char*)code));
+				HAL_TIM_Base_Stop(&htim7);
+				TIM7->CNT=0;
 			}
 
 			//other menus
@@ -1338,217 +1378,288 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 		break;
 
 		case KEY_1:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				pushCharBuffer(key_map_lc, key); //lowercase=uppercase for this key
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
-
-				if(strlen((char*)code)>0)
-					memset((char*)code, 0, strlen((char*)code));
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_2:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_3:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_4:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_5:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_6:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_7:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_8:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_9:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_ASTERISK:
+			if(*text_mode==TEXT_LOWERCASE)
+			{
+				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
+
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-				{
-					pushCharBuffer(key_map_lc, key);
-				}
-				else if (*text_mode==TEXT_UPPERCASE)
-				{
-					pushCharBuffer(key_map_uc, key);
-				}
-				else //(*text_mode==TEXT_T9)
-				{
-					pushCharT9(key);
-				}
-
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
 		case KEY_0:
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
+			if(*text_mode==TEXT_LOWERCASE)
 			{
 				pushCharBuffer(key_map_lc, key);
+			}
+			else if (*text_mode==TEXT_UPPERCASE)
+			{
+				pushCharBuffer(key_map_uc, key);
+			}
+			else //(*text_mode==TEXT_T9)
+			{
+				pushCharT9(key);
+			}
 
+			if(*disp_state==DISP_TEXT_MSG_ENTRY)
+			{
 				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, message, 0, ALIGN_LEFT);
-
-				if(strlen((char*)code)>0)
-					memset((char*)code, 0, strlen((char*)code));
+				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+			}
+			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
+			{
+				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -2065,8 +2176,8 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//"msg=STRING"
 	else if(strstr((char*)str, "msg")==(char*)str)
 	{
-		strcpy(message, strstr((char*)str, "=")+1);
-		initTextTX(message);
+		strcpy(text_entry, strstr((char*)str, "=")+1);
+		initTextTX(text_entry);
 	}
 
 	//get LSF META field
