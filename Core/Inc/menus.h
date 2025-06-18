@@ -99,14 +99,14 @@ disp_t displays[13] =
 		DISP_MAIN_MENU
 	},
 
-	//5
+	//DISP_RADIO_SETTINGS - 5
 	{
 		"Radio settings",
-		1,
+		2,
 
-		{"Offset"},
-		{"+0.0ppm"},
-		{DISP_NONE},
+		{"Offset", "RF power"},
+		{"+0.0ppm", "0.5W"},
+		{DISP_NONE, DISP_NONE},
 
 		DISP_SETTINGS
 	},
@@ -135,7 +135,7 @@ disp_t displays[13] =
 		DISP_SETTINGS
 	},
 
-	//8
+	//DISP_M17_SETTINGS - 8
 	{
 		"M17 settings",
 		3,

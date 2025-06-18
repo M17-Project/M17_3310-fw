@@ -42,7 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.1.2"
+#define FW_VER					"1.1.3"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -147,7 +147,7 @@ typedef enum rf_power
 //lowercase
 const char key_map_lc[11][15] =
 {
-	".,?!'\"-+()@/:1", //KEY_1
+	".,?!1'\"-+()@/:", //KEY_1
 	"abc2", //KEY_2
 	"def3", //KEY_3
 	"ghi4", //KEY_4
@@ -163,7 +163,7 @@ const char key_map_lc[11][15] =
 //uppercase
 const char key_map_uc[11][15] =
 {
-	".,?!'\"-+()@/:1", //KEY_1
+	".,?!1'\"-+()@/:", //KEY_1
 	"ABC2", //KEY_2
 	"DEF3", //KEY_3
 	"GHI4", //KEY_4
@@ -267,6 +267,17 @@ dev_settings_t def_dev_settings =
 
 dev_settings_t dev_settings;
 
+//editable settings
+typedef enum edit_set
+{
+	EDIT_NONE,
+	EDIT_M17_SRC_CALLSIGN,
+	EDIT_M17_DST_CALLSIGN,
+	EDIT_M17_CAN
+} edit_set_t;
+
+edit_set_t edit_set = EDIT_NONE;
+
 //M17
 uint16_t frame_samples[2][SYM_PER_FRA*10]; //sps=10
 int8_t frame_symbols[SYM_PER_FRA];
@@ -332,6 +343,7 @@ void setFreqRF(uint32_t freq, float corr);
 void setBacklight(uint8_t level);
 void chBwRF(ch_bw_t bw);
 uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
+void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -1063,7 +1075,9 @@ void pushCharT9(kbd_key_t key)
 	}
 }
 
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings, kbd_key_t key)
+void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
+		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
+		kbd_key_t key, edit_set_t *edit_set)
 {
 	//backlight on
 	if(key!=KEY_NONE && dev_settings->backlight_always==0)
@@ -1105,26 +1119,37 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			//main menu
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
+				*disp_state = next_disp;
+
 				if(item==0) //"Messaging"
 				{
-					*disp_state = next_disp;
 					//clear message and display text entry screen
 					memset(text_entry, 0, strlen(text_entry));
 					showTextMessageEntry(buff, *text_mode);
 				}
+				else if(item==1) //"Settings"
+				{
+					//load settings from NVMEM
+					loadDeviceSettings(dev_settings, &def_dev_settings);
+					showMenu(buff, displays[*disp_state], 0, 0);
+				}
 				else
 				{
-					if(next_disp != DISP_NONE)
-					{
-						*disp_state = next_disp;
-						showMenu(buff, displays[*disp_state], 0, 0);
-					}
+					showMenu(buff, displays[*disp_state], 0, 0);
 				}
 			}
 
 			//M17 settings
 			else if(*disp_state==DISP_M17_SETTINGS)
 			{
+				if(item==0)
+					*edit_set=EDIT_M17_SRC_CALLSIGN;
+				else if(item==1)
+					*edit_set=EDIT_M17_DST_CALLSIGN;
+				else if(item==2)
+					*edit_set=EDIT_M17_CAN;
+
+				//all menu entries are editable
 				*disp_state = next_disp;
 				showTextValueEntry(buff, *text_mode);
 			}
@@ -1141,25 +1166,27 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				//TODO: fix this
-				//find out which setting is being edited
-				;
-
-				//example - SRC
-				//strcpy(dev_settings->src_callsign, text_entry);
-				//saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
-
-				/*dbg_print("src: %s\n", dev_settings->src_callsign);
-				HAL_Delay(100);
-				for(uint8_t i=0; i<sizeof(dev_settings_t); i++)
+				if(*edit_set==EDIT_M17_SRC_CALLSIGN)
 				{
-					dbg_print("%02X ", *((uint8_t*)dev_settings+i));
-					HAL_Delay(100);
+					memset(dev_settings->src_callsign, 0, sizeof(dev_settings->src_callsign));
+					strcpy(dev_settings->src_callsign, text_entry);
 				}
-				dbg_print("\n");*/
+				else if(*edit_set==EDIT_M17_DST_CALLSIGN)
+				{
+					memset(dev_settings->channel.dst, 0, sizeof(dev_settings->channel.dst));
+					strcpy(dev_settings->channel.dst, text_entry);
+				}
+				else if(*edit_set==EDIT_M17_CAN)
+				{
+					uint8_t val = atoi(text_entry);
+					if(val<16)
+						dev_settings->channel.can = val;
+				}
+
+				*edit_set = EDIT_NONE;
+				saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
 
 				memset(text_entry, 0, strlen(text_entry));
-
 				*disp_state = DISP_MAIN_SCR;
 				showMainScreen(buff);
 			}
@@ -1334,7 +1361,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			}
 
 			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
 				pos=strlen(text_entry);
 				memset((char*)code, 0, strlen((char*)code));
@@ -1343,7 +1370,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			}
 
 			//other menus
-			else if(*disp_state!=DISP_TEXT_VALUE_ENTRY)
+			else
 			{
 				if(menu_pos_hl==0)
 				{
@@ -1374,9 +1401,9 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state, text_entry
 			}
 
 			//else
-			{
+			/*{
 				;
-			}
+			}*/
 		break;
 
 		case KEY_1:
@@ -2310,7 +2337,8 @@ int main(void)
 	  r++;
 
 	  //handle key presses
-	  handleKey(disp_buff, &curr_disp_state, &text_mode, &radio_state, &dev_settings, scanKeys(dev_settings.kbd_delay));
+	  handleKey(disp_buff, &curr_disp_state, &text_mode, &radio_state,
+			  &dev_settings, scanKeys(dev_settings.kbd_delay), &edit_set);
 
 	  //refresh main screen data
 	  if(r%100==0 && curr_disp_state==DISP_MAIN_SCR)
