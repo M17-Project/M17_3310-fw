@@ -106,7 +106,7 @@ disp_t displays[13] =
 
 		{"Offset", "RF power"},
 		{"+0.0ppm", "0.5W"},
-		{DISP_NONE, DISP_NONE},
+		{DISP_TEXT_VALUE_ENTRY, DISP_TEXT_VALUE_ENTRY},
 
 		DISP_SETTINGS
 	},
@@ -159,12 +159,12 @@ disp_t displays[13] =
 		DISP_MAIN_MENU
 	},
 
-	//10
+	//DISP_DEBUG - 10
 	{
 		"Debug menu",
 		1,
 
-		{"Empty"},
+		{"Dummy M17 TX"},
 		{""},
 		{DISP_NONE},
 

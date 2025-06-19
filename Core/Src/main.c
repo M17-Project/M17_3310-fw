@@ -42,7 +42,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.1.3"
+#define FW_VER					"1.1.4"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
@@ -273,7 +273,9 @@ typedef enum edit_set
 	EDIT_NONE,
 	EDIT_M17_SRC_CALLSIGN,
 	EDIT_M17_DST_CALLSIGN,
-	EDIT_M17_CAN
+	EDIT_M17_CAN,
+	EDIT_RF_PPM,
+	EDIT_RF_PWR
 } edit_set_t;
 
 edit_set_t edit_set = EDIT_NONE;
@@ -287,6 +289,7 @@ volatile uint8_t frame_pend; //frame generation pending?
 uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
 uint8_t payload[26]; //frame payload
+volatile uint8_t debug_tx; //debug: transmit dummy signal?
 
 //radio
 typedef enum radio_state
@@ -931,6 +934,17 @@ void initTextTX(const char *message)
 	frame_pend=1;
 }
 
+//initialize debug M17 transmission
+void initDebugTX(void)
+{
+	HAL_ADC_Stop_DMA(&hadc1);
+	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC sample clock
+
+	radio_state = RF_TX;
+	setRF(radio_state);
+	debug_tx=1;
+}
+
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
 kbd_key_t scanKeys(uint8_t rep)
 {
@@ -1112,6 +1126,10 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			//main screen
 			if(*disp_state==DISP_MAIN_SCR)
 			{
+				//clear the text entry buffer before entering the main menu
+				//TODO: this will have to be moved later
+				memset(text_entry, 0, strlen(text_entry));
+
 				*disp_state = next_disp;
 				showMenu(buff, displays[*disp_state], 0, 0);
 			}
@@ -1123,8 +1141,6 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 				if(item==0) //"Messaging"
 				{
-					//clear message and display text entry screen
-					memset(text_entry, 0, strlen(text_entry));
 					showTextMessageEntry(buff, *text_mode);
 				}
 				else if(item==1) //"Settings"
@@ -1137,6 +1153,19 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				{
 					showMenu(buff, displays[*disp_state], 0, 0);
 				}
+			}
+
+			//Radio settings
+			else if(*disp_state==DISP_RADIO_SETTINGS)
+			{
+				if(item==0)
+					*edit_set=EDIT_RF_PPM;
+				else if(item==1)
+					*edit_set=EDIT_RF_PWR;
+
+				//all menu entries are editable
+				*disp_state = next_disp;
+				showTextValueEntry(buff, *text_mode);
 			}
 
 			//M17 settings
@@ -1166,7 +1195,38 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				if(*edit_set==EDIT_M17_SRC_CALLSIGN)
+				if(*edit_set==EDIT_RF_PPM)
+				{
+					float val = atof(text_entry);
+					if(fabsf(val)<=50.0f)
+					{
+						dev_settings->freq_corr = val;
+						//TODO: fix how the frequency correction is applied for TX
+						if(radio_state==RF_RX)
+						{
+							setFreqRF(dev_settings->channel.rx_frequency, dev_settings->freq_corr);
+						}
+						/*else //i believe this is an impossible case
+						{
+							setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
+						}*/
+					}
+				}
+				else if(*edit_set==EDIT_RF_PWR)
+				{
+					float val = atof(text_entry);
+					if(val>1.0f)
+					{
+						dev_settings->channel.rf_pwr=RF_PWR_HIGH; //2W output power
+						HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
+					}
+					else
+					{
+						dev_settings->channel.rf_pwr=RF_PWR_LOW; //0.5W output power
+						HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
+					}
+				}
+				else if(*edit_set==EDIT_M17_SRC_CALLSIGN)
 				{
 					memset(dev_settings->src_callsign, 0, sizeof(dev_settings->src_callsign));
 					strcpy(dev_settings->src_callsign, text_entry);
@@ -1186,17 +1246,29 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				*edit_set = EDIT_NONE;
 				saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
 
-				memset(text_entry, 0, strlen(text_entry));
 				*disp_state = DISP_MAIN_SCR;
 				showMainScreen(buff);
 			}
 
-			//settings, info or debug
-			else if(*disp_state==DISP_SETTINGS || \
-					*disp_state==DISP_INFO || \
-					*disp_state==DISP_DEBUG)
+			//debug menu
+			else if(*disp_state==DISP_DEBUG)
 			{
-				if(next_disp != DISP_NONE)
+				if(item==0)
+				{
+					debug_tx ^= 1;
+					//initialize dummy transmission
+					if(*radio_state==RF_RX && debug_tx)
+					{
+						;//initDebugTX();
+					}
+				}
+			}
+
+			//settings or info
+			else /*if(*disp_state==DISP_SETTINGS || \
+					*disp_state==DISP_INFO)*/
+			{
+				if(next_disp!=DISP_NONE)
 				{
 					*disp_state = next_disp;
 					showMenu(buff, displays[*disp_state], 0, 0);
@@ -1204,10 +1276,10 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			}
 
 			//
-			else
+			/*else
 			{
 				;
-			}
+			}*/
 
 			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
 		break;
@@ -1770,7 +1842,7 @@ void reloadRF(void)
 	maskSetRegRF(0x30, 0x0060, funcMode); //Restore op. status
 }
 
-void setFreqRF(uint32_t freq, const float corr)
+void setFreqRF(uint32_t freq, float corr)
 {
 	freq = (float)freq * (1.0f + corr/1e6);
 
@@ -2099,7 +2171,7 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 
 	//load settings into menus
 	//frequency correction
-	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm",
+	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm", //TODO: there is some problem with negative values here
 			(int8_t)(dev_settings->freq_corr), (uint8_t)fabsf(10*dev_settings->freq_corr) - (int8_t)fabsf((int8_t)(dev_settings->freq_corr)*10.0f)
 	);
 
@@ -2447,6 +2519,12 @@ int main(void)
 
 		  frame_pend=0;
 	  }
+
+	  //debug M17 transmission
+	  /*if(debug_tx==1)
+	  {
+		  ;
+	  }*/
 
 	  //received data over USB
 	  if(usb_drdy)
