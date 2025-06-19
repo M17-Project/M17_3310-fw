@@ -491,7 +491,7 @@ void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], 
 
 			if(j==0)
 			{
-				if(phase_inv) //normal phase - invert the symbol stream as GBA inverts the output
+				if(phase_inv) //optional phase inversion
 					last[80]=-in[i];
 				else
 					last[80]= in[i];
