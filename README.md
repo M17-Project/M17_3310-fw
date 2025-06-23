@@ -21,10 +21,6 @@ Open the "Project Explorer" inside STM32CubeIDE
   * click on "MCU/MPU GCC Compiler" > "Include Paths"
   * make sure that the following paths are included:
 
-Now start STM32CubeIDE, click on "File" > "Open Projects from File System..." and select the cloned directory
-
-Open the "Project Explorer" inside STM32CubeIDE, right click on the topmost item (M17_3310-fw), then select "Properties". Under "C/C++ Build" select "Settings". Now click on "MCU/MPU GCC Compiler" > "Include Paths" and make sure that the following paths are included:
-
 ```
 ../Core/Inc
 ../Core/libm17
