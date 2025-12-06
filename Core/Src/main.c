@@ -30,7 +30,7 @@
 #include "usbd_cdc_if.h"
 
 #include "fonts.h"
-#include "../t9/dict_en.h"
+#include "../t9/dict/dict_en.h"
 #include "../t9/t9.h"
 #include <m17.h>
 /* USER CODE END Includes */
@@ -607,7 +607,7 @@ char *addCode(char *code, char symbol)
 {
 	code[strlen(code)] = symbol;
 
-	return getWord(dict_en, code);
+	return getWord(dict, code);
 }
 
 //hardware
