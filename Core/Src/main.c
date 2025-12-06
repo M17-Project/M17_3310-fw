@@ -1797,6 +1797,12 @@ void setKeysTimeout(const uint16_t delay)
 	TIM7->ARR=delay*10-1;
 }
 
+//set backlight timeout timer (seconds)
+void setBacklightTimer(uint8_t t)
+{
+	TIM14->PSC = (uint32_t)t*2000-1; //1s corresponds to 2000
+}
+
 //RF module
 uint8_t setRegRF(uint8_t reg, uint16_t val)
 {
@@ -2203,8 +2209,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	{
 		dev_settings.backlight_timer=atoi(strstr((char*)str, "=")+1);
 		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
-		htim14.Init.Prescaler = dev_settings.backlight_timer*2000; //1s is 2000
-		HAL_TIM_Base_Init(&htim14);
+		setBacklightTimer(dev_settings.backlight_timer);
 	}
 
 	//display backlight
@@ -2365,8 +2370,7 @@ int main(void)
   else
   {
 	  //update PSC value
-	  htim14.Init.Prescaler = dev_settings.backlight_timer*2000; //1s is 2000
-	  HAL_TIM_Base_Init(&htim14);
+	  setBacklightTimer(dev_settings.backlight_timer);
   }
 
   //display splash screen
