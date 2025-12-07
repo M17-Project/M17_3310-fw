@@ -2,9 +2,10 @@
 // 3310 menus/displays state machine related stuff - menus.h
 //
 // Wojciech Kaczmarski, SP5WWP
-// M17 Foundation, 16 June 2025
+// M17 Foundation, 7 December 2025
 //--------------------------------------------------------------------
-#pragma once
+#ifndef INC_MENUS_H_
+#define INC_MENUS_H_
 
 #define MAX_NUM_ITEMS		16
 
@@ -196,3 +197,4 @@ disp_t displays[13] =
 	},
 };
 
+#endif

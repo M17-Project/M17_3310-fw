@@ -29,10 +29,17 @@
 
 #include "usbd_cdc_if.h"
 
+#include <m17.h>
+
 #include "fonts.h"
 #include "../t9/dict/dict_en.h"
 #include "../t9/t9.h"
-#include <m17.h>
+
+#define  FW_VER					"1.1.4"
+#include "typedefs.h"
+#include "keymaps.h"
+#include "menus.h"
+#include "settings.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,22 +49,17 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.1.4"
 #define DAC_IDLE				2048
 #define RES_X					84
 #define RES_Y					48
 #define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
 #define MEM_START				(0x080E0000U) //last sector, 128kB
-#define CH_MAX_NUM				128
-
-#define FIX_TIMER_TRIGGER(handle_ptr) (__HAL_TIM_CLEAR_FLAG(handle_ptr, TIM_SR_UIF))
-
-#define arrlen(x) (sizeof(x)/sizeof(*x))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#define FIX_TIMER_TRIGGER(handle_ptr) (__HAL_TIM_CLEAR_FLAG(handle_ptr, TIM_SR_UIF))
+#define arrlen(x) (sizeof(x)/sizeof(*x))
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -87,94 +89,13 @@ uint16_t r;
 //display
 uint8_t disp_buff[DISP_BUFF_SIZ];
 
-//some typedefs
-typedef enum text_entry
-{
-    TEXT_LOWERCASE,
-	TEXT_UPPERCASE,
-	TEXT_T9
-} text_entry_t;
-
+//text entry
 text_entry_t text_mode = TEXT_LOWERCASE;
 
 //menus state machine
-#include "menus.h"
+
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
 disp_state_t curr_disp_state = DISP_NONE;
-
-//keys
-typedef enum key
-{
-	KEY_NONE,
-	KEY_OK,
-	KEY_C,
-	KEY_LEFT,
-	KEY_RIGHT,
-	KEY_1,
-	KEY_2,
-	KEY_3,
-	KEY_4,
-	KEY_5,
-	KEY_6,
-	KEY_7,
-	KEY_8,
-	KEY_9,
-	KEY_ASTERISK,
-	KEY_0,
-	KEY_HASH
-} kbd_key_t;
-
-//settings
-typedef enum ch_bw
-{
-	RF_BW_12K5,
-	RF_BW_25K
-} ch_bw_t;
-
-typedef enum rf_mode
-{
-	RF_MODE_FM,
-	RF_MODE_4FSK
-} rf_mode_t;
-
-typedef enum rf_power
-{
-	RF_PWR_LOW,
-	RF_PWR_HIGH
-} rf_power_t;
-
-//key maps
-//lowercase
-const char key_map_lc[11][15] =
-{
-	".,?!1'\"-+()@/:", //KEY_1
-	"abc2", //KEY_2
-	"def3", //KEY_3
-	"ghi4", //KEY_4
-	"jkl5", //KEY_5
-	"mno6", //KEY_6
-	"pqrs7", //KEY_7
-	"tuv8", //KEY_8
-	"wxyz9", //KEY_9
-	"*=#", //KEY_ASTERISK
-	" 0", //KEY_0
-};
-
-//uppercase
-const char key_map_uc[11][15] =
-{
-	".,?!1'\"-+()@/:", //KEY_1
-	"ABC2", //KEY_2
-	"DEF3", //KEY_3
-	"GHI4", //KEY_4
-	"JKL5", //KEY_5
-	"MNO6", //KEY_6
-	"PQRS7", //KEY_7
-	"TUV8", //KEY_8
-	"WXYZ9", //KEY_9
-	"*=#", //KEY_ASTERISK
-	" 0", //KEY_0
-};
 
 //text/T9 related variables
 char code[16];
@@ -186,18 +107,8 @@ uint8_t usb_rx[APP_RX_DATA_SIZE];
 uint32_t usb_len;
 uint8_t usb_drdy;
 
-//settings
-typedef struct ch_settings
-{
-	rf_mode_t mode;
-	ch_bw_t ch_bw;
-	rf_power_t rf_pwr;
-	char ch_name[24];
-	uint32_t rx_frequency;
-	uint32_t tx_frequency;
-	char dst[12];
-	uint8_t can;
-} ch_settings_t;
+//codeplug and settings
+codeplug_t codeplug;
 
 //default channel settings
 const ch_settings_t def_channel =
@@ -211,40 +122,6 @@ const ch_settings_t def_channel =
 	"@ALL",
 	0
 };
-
-typedef struct codeplug
-{
-	char name[24];
-	uint8_t num_items;
-	ch_settings_t channel[CH_MAX_NUM];
-} codeplug_t;
-
-codeplug_t codeplug;
-
-typedef enum tuning_mode
-{
-	TUNING_VFO,
-	TUNING_MEM
-} tuning_mode_t;
-
-typedef struct dev_settings
-{
-	char src_callsign[12];
-	char welcome_msg[2][24];
-
-	uint8_t backlight_level;
-	uint8_t backlight_timer;
-	uint8_t backlight_always;
-	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
-	uint16_t kbd_delay; //insensitivity delay after keypress detection
-	float freq_corr;
-
-	tuning_mode_t tuning_mode;
-	ch_settings_t channel;
-	uint16_t ch_num;
-
-	char refl_name[12];
-} dev_settings_t;
 
 dev_settings_t def_dev_settings =
 {
@@ -267,17 +144,6 @@ dev_settings_t def_dev_settings =
 
 dev_settings_t dev_settings;
 
-//editable settings
-typedef enum edit_set
-{
-	EDIT_NONE,
-	EDIT_M17_SRC_CALLSIGN,
-	EDIT_M17_DST_CALLSIGN,
-	EDIT_M17_CAN,
-	EDIT_RF_PPM,
-	EDIT_RF_PWR
-} edit_set_t;
-
 edit_set_t edit_set = EDIT_NONE;
 
 //M17
@@ -292,31 +158,24 @@ uint8_t payload[26]; //frame payload
 volatile uint8_t debug_tx; //debug: transmit dummy signal?
 
 //radio
-typedef enum radio_state
-{
-	RF_RX,
-	RF_TX
-} radio_state_t;
-
 radio_state_t radio_state;
 
 //ADC
 volatile uint16_t adc_vals[2];
 volatile uint16_t bsb_cnt;
-volatile uint16_t bsb_in[960*2];
+uint16_t bsb_in[960*2];
 
 //ring buffer
 typedef struct ring
 {
-    volatile void *buffer;
+    void *buffer;
     uint16_t size;
-    uint16_t wr_pos;
-    uint16_t rd_pos;
-    uint16_t num_items;
+    volatile uint16_t wr_pos;
+    volatile uint16_t rd_pos;
 } ring_t;
 
-volatile ring_t raw_bsb_ring;
-volatile uint16_t raw_bsb_buff[960];
+ring_t raw_bsb_ring;
+uint16_t raw_bsb_buff[960];
 float flt_bsb_buff[8*5];		//TODO: hold extra 2 samples for L2 norm minimum lookup
 float pld_symbs[SYM_PER_PLD];	//payload symbols
 uint8_t num_pld_symbs;
@@ -365,26 +224,25 @@ void dbg_print(const char* fmt, ...)
 }
 
 //ring buffer functions
-void initRing(volatile ring_t *ring, volatile void *buffer, uint16_t size)
+void initRing(ring_t *ring, void *buffer, uint16_t size)
 {
     ring->buffer = buffer;
     ring->size = size;
     ring->wr_pos = 0;
     ring->rd_pos = 0;
-    ring->num_items = 0;
 }
 
-uint16_t getNumItems(volatile ring_t *ring)
+uint16_t getNumItems(ring_t *ring)
 {
-    return ring->num_items;
+	return (ring->wr_pos - ring->rd_pos + ring->size) % ring->size;
 }
 
-uint16_t getSize(volatile ring_t *ring)
+uint16_t getSize(ring_t *ring)
 {
     return ring->size;
 }
 
-uint8_t pushU16Value(volatile ring_t *ring, uint16_t val)
+uint8_t pushU16Value(ring_t *ring, uint16_t val)
 {
     uint16_t size = getSize(ring);
 
@@ -392,7 +250,6 @@ uint8_t pushU16Value(volatile ring_t *ring, uint16_t val)
     {
         ((uint16_t*)ring->buffer)[ring->wr_pos]=val;
         ring->wr_pos = (ring->wr_pos+1) % size;
-        ring->num_items++;
         return 0;
     }
     else
@@ -401,7 +258,7 @@ uint8_t pushU16Value(volatile ring_t *ring, uint16_t val)
     }
 }
 
-uint8_t pushFloatValue(volatile ring_t *ring, float val)
+uint8_t pushFloatValue(ring_t *ring, float val)
 {
     uint16_t size = getSize(ring);
 
@@ -409,7 +266,6 @@ uint8_t pushFloatValue(volatile ring_t *ring, float val)
     {
         ((float*)ring->buffer)[ring->wr_pos]=val;
         ring->wr_pos = (ring->wr_pos+1) % size;
-        ring->num_items++;
         return 0;
     }
     else
@@ -418,15 +274,14 @@ uint8_t pushFloatValue(volatile ring_t *ring, float val)
     }
 }
 
-uint16_t popU16Value(volatile ring_t *ring)
+uint16_t popU16Value(ring_t *ring)
 {
-    if(getNumItems(ring)>0)
+    if(getNumItems(ring))
     {
         uint16_t size = getSize(ring);
         uint16_t pos = ring->rd_pos;
 
         ring->rd_pos = (ring->rd_pos+1) % size;
-        ring->num_items--;
 
         return ((uint16_t*)ring->buffer)[pos];
     }
@@ -434,15 +289,14 @@ uint16_t popU16Value(volatile ring_t *ring)
     return 0;
 }
 
-float popFloatValue(volatile ring_t *ring)
+float popFloatValue(ring_t *ring)
 {
-    if(getNumItems(ring)>0)
+    if(getNumItems(ring))
     {
         uint16_t size = getSize(ring);
         uint16_t pos = ring->rd_pos;
 
         ring->rd_pos = (ring->rd_pos+1) % size;
-        ring->num_items--;
 
         return ((float*)ring->buffer)[pos];
     }
@@ -887,11 +741,11 @@ void showTextValueEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
 //show menu with item highlighting
 //start_item - absolute index of first item to display
 //h_item - item to highlight, relative value: 0..3
-void showMenu(uint8_t buff[DISP_BUFF_SIZ], const disp_t menu, const uint8_t start_item, const uint8_t h_item)
+void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_t menu, uint8_t start_item, uint8_t h_item)
 {
     dispClear(buff, 0);
 
-    setString(buff, 0, 0, &nokia_small_bold, (char*)menu.title, 0, ALIGN_CENTER);
+    setString(buff, 0, 0, &nokia_small_bold, menu.title, 0, ALIGN_CENTER);
 
     for(uint8_t i=0; i<start_item+menu.num_items && i<4; i++)
     {
@@ -899,9 +753,9 @@ void showMenu(uint8_t buff[DISP_BUFF_SIZ], const disp_t menu, const uint8_t star
     	if(i==h_item)
     		drawRect(buff, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
 
-    	setString(buff, 1, (i+1)*9, &nokia_small, (char*)menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
+    	setString(buff, 1, (i+1)*9, &nokia_small, menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
     	if(menu.value[i+start_item][0]!=0)
-    		setString(buff, 0, (i+1)*9, &nokia_small, (char*)menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
+    		setString(buff, 0, (i+1)*9, &nokia_small, menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
     }
 }
 
@@ -1076,7 +930,7 @@ void pushCharT9(kbd_key_t key)
 		c = '2'+key-KEY_2;
 	else
 		c = '*';
-	const char *w = addCode((char*)code, c);
+	const char *w = addCode(code, c);
 
 	if(strlen(w)!=0)
 	{
