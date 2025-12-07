@@ -177,8 +177,8 @@ const char key_map_uc[11][15] =
 };
 
 //text/T9 related variables
-volatile char code[15]="";
-char text_entry[256]=""; //this handles all kinds of text entry
+char code[16];
+char text_entry[256]; //this handles all kinds of text entry
 volatile uint8_t pos=0;
 
 //usb-related
@@ -1026,8 +1026,7 @@ kbd_key_t scanKeys(uint8_t rep)
 //push a character into the text message buffer
 void pushCharBuffer(const char key_map[][sizeof(key_map_lc[0])], kbd_key_t key)
 {
-	key -= KEY_1; //start indexing at 0
-	char *key_chars = (char*)key_map[key];
+	const char *key_chars = key_map[key-KEY_1]; // start indexing at 0
 	uint8_t map_len = strlen(key_chars);
 	uint8_t new = 1;
 
@@ -1050,7 +1049,7 @@ void pushCharBuffer(const char key_map[][sizeof(key_map_lc[0])], kbd_key_t key)
 		if(new)
 		{
 			text_entry[pos] = key_chars[0];
-			if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
+			if(key==KEY_0 && text_mode==TEXT_T9)
 			{
 				pos++;
 			}
@@ -1059,7 +1058,7 @@ void pushCharBuffer(const char key_map[][sizeof(key_map_lc[0])], kbd_key_t key)
 	else
 	{
 		text_entry[pos] = key_chars[0];
-		if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
+		if(key==KEY_0 && text_mode==TEXT_T9)
 		{
 			pos++;
 		}
@@ -1309,9 +1308,11 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				//backspace
 				if(strlen(text_entry)>0)
 				{
-					memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
+					//memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
+					text_entry[strlen(text_entry)-1] = 0;
 					pos=strlen(text_entry);
-					memset((char*)code, 0, strlen((char*)code));
+					if (*code)
+						memset(code, 0, strlen(code)); // clear T9 code only when required
 
 					drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
 					setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
@@ -1329,9 +1330,11 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				//backspace
 				if(strlen(text_entry)>0)
 				{
-					memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
+					//memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
+					text_entry[strlen(text_entry)-1] = 0;
 					pos=strlen(text_entry);
-					memset((char*)code, 0, strlen((char*)code));
+					if (*code)
+						memset(code, 0, strlen(code)); // clear T9 code only when required
 
 					drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
 					setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
@@ -1436,7 +1439,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
 				pos=strlen(text_entry);
-				memset((char*)code, 0, strlen((char*)code));
+				if (*code)
+					memset(code, 0, strlen(code));
 				HAL_TIM_Base_Stop(&htim7);
 				TIM7->CNT=0;
 			}
@@ -1487,9 +1491,9 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			{
 				pushCharBuffer(key_map_uc, key);
 			}
-			else //(*text_mode==TEXT_T9)
+			else if (*text_mode==TEXT_T9)
 			{
-				pushCharT9(key);
+				pushCharBuffer(key_map_lc, key);
 			}
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
@@ -1747,10 +1751,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			{
 				pushCharBuffer(key_map_uc, key);
 			}
-			else //(*text_mode==TEXT_T9)
+			else if (*text_mode==TEXT_T9)
 			{
-				pushCharT9(key);
+				if (*code)
+					memset(code, 0, strlen(code)); // clear the T9 code if needed
+				pushCharBuffer(key_map_lc, key);
 			}
+
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
