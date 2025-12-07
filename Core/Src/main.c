@@ -603,7 +603,7 @@ uint16_t getBasebandSample(void)
 }
 
 //T9 related
-char *addCode(char *code, char symbol)
+const char *addCode(char *code, char symbol)
 {
 	code[strlen(code)] = symbol;
 
@@ -1069,7 +1069,7 @@ void pushCharBuffer(const char key_map[][sizeof(key_map_lc[0])], kbd_key_t key)
 	HAL_TIM_Base_Start_IT(&htim7);
 }
 
-//push characted for T9 code
+//push character for T9 code
 void pushCharT9(kbd_key_t key)
 {
 	char c;
@@ -1077,7 +1077,7 @@ void pushCharT9(kbd_key_t key)
 		c = '2'+key-KEY_2;
 	else
 		c = '*';
-	char *w = addCode((char*)code, c);
+	const char *w = addCode((char*)code, c);
 
 	if(strlen(w)!=0)
 	{
@@ -3323,8 +3323,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
