@@ -35,11 +35,12 @@
 #include "../t9/dict/dict_en.h"
 #include "../t9/t9.h"
 
-#define  FW_VER					"1.1.4"
 #include "typedefs.h"
 #include "keymaps.h"
 #include "menus.h"
 #include "settings.h"
+#include "ring.h"
+#include "display.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,9 +51,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define DAC_IDLE				2048
-#define RES_X					84
-#define RES_Y					48
-#define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
 #define MEM_START				(0x080E0000U) //last sector, 128kB
 /* USER CODE END PD */
 
@@ -165,15 +163,6 @@ volatile uint16_t adc_vals[2];
 volatile uint16_t bsb_cnt;
 uint16_t bsb_in[960*2];
 
-//ring buffer
-typedef struct ring
-{
-    void *buffer;
-    uint16_t size;
-    volatile uint16_t wr_pos;
-    volatile uint16_t rd_pos;
-} ring_t;
-
 ring_t raw_bsb_ring;
 uint16_t raw_bsb_buff[960];
 float flt_bsb_buff[8*5];		//TODO: hold extra 2 samples for L2 norm minimum lookup
@@ -221,87 +210,6 @@ void dbg_print(const char* fmt, ...)
 	va_end(ap);
 
 	CDC_Transmit_FS((uint8_t*)str, strlen(str));
-}
-
-//ring buffer functions
-void initRing(ring_t *ring, void *buffer, uint16_t size)
-{
-    ring->buffer = buffer;
-    ring->size = size;
-    ring->wr_pos = 0;
-    ring->rd_pos = 0;
-}
-
-uint16_t getNumItems(ring_t *ring)
-{
-	return (ring->wr_pos - ring->rd_pos + ring->size) % ring->size;
-}
-
-uint16_t getSize(ring_t *ring)
-{
-    return ring->size;
-}
-
-uint8_t pushU16Value(ring_t *ring, uint16_t val)
-{
-    uint16_t size = getSize(ring);
-
-    if(getNumItems(ring)<size)
-    {
-        ((uint16_t*)ring->buffer)[ring->wr_pos]=val;
-        ring->wr_pos = (ring->wr_pos+1) % size;
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
-uint8_t pushFloatValue(ring_t *ring, float val)
-{
-    uint16_t size = getSize(ring);
-
-    if(getNumItems(ring)<size)
-    {
-        ((float*)ring->buffer)[ring->wr_pos]=val;
-        ring->wr_pos = (ring->wr_pos+1) % size;
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
-uint16_t popU16Value(ring_t *ring)
-{
-    if(getNumItems(ring))
-    {
-        uint16_t size = getSize(ring);
-        uint16_t pos = ring->rd_pos;
-
-        ring->rd_pos = (ring->rd_pos+1) % size;
-
-        return ((uint16_t*)ring->buffer)[pos];
-    }
-
-    return 0;
-}
-
-float popFloatValue(ring_t *ring)
-{
-    if(getNumItems(ring))
-    {
-        uint16_t size = getSize(ring);
-        uint16_t pos = ring->rd_pos;
-
-        ring->rd_pos = (ring->rd_pos+1) % size;
-
-        return ((float*)ring->buffer)[pos];
-    }
-
-    return 0.0f;
 }
 
 //RX baseband filtering (sps=5)
@@ -487,276 +395,6 @@ void playBeep(uint16_t duration) //blocking
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
 	HAL_Delay(duration);
 	HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-}
-
-//display
-void dispWrite(uint8_t dc, uint8_t val)
-{
-	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, dc);
-
-	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 0);
-	HAL_SPI_Transmit(&hspi1, &val, 1, 10);
-	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
-}
-
-void dispInit(void)
-{
-	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, 1);
-	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
-	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1);
-
-	//toggle LCD reset
-	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 0); //RES low
-	HAL_Delay(10);
-	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1); //RES high
-	HAL_Delay(10);
-
-	dispWrite(0, 0x21);			//extended commands
-	dispWrite(0, 0x80|0x48);	//contrast (0x00 to 0x7F)
-	dispWrite(0, 0x06);			//temp coeff.
-	dispWrite(0, 0x13);			//LCD bias 1:48
-	dispWrite(0, 0x20);			//standard commands
-	dispWrite(0, 0x0C);			//normal mode
-}
-
-void dispGotoXY(uint8_t x, uint8_t y)
-{
-	dispWrite(0, 0x80|(6*x));
-	dispWrite(0, 0x40|y);
-}
-
-void dispRefresh(uint8_t buff[DISP_BUFF_SIZ])
-{
-	dispGotoXY(0, 0);
-
-	for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-		dispWrite(1, buff[i]);
-}
-
-void dispClear(uint8_t buff[DISP_BUFF_SIZ], uint8_t fill)
-{
-	uint8_t val = fill ? 0xFF : 0;
-
-	memset(buff, val, DISP_BUFF_SIZ);
-
-	dispGotoXY(0, 0);
-
-    for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-    	dispWrite(1, val);
-}
-
-void setPixel(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, uint8_t set)
-{
-	if(x<RES_X && y<RES_Y)
-	{
-		uint16_t loc = x + (y/8)*RES_X;
-
-		if(!set)
-			buff[loc] |= (1<<(y%8));
-		else
-			buff[loc] &= ~(1<<(y%8));
-	}
-}
-
-void setChar(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color)
-{
-	uint8_t h=f->height;
-	c-=' ';
-
-	for(uint8_t i=0; i<h; i++)
-	{
-		for(uint8_t j=0; j<f->symbol[(uint8_t)c].width; j++)
-		{
-			if(f->symbol[(uint8_t)c].rows[i] & 1<<(((h>8)?(h+3):(h))-1-j)) //fonts are right-aligned
-				setPixel(buff, x+j, y+i, color);
-		}
-	}
-}
-
-//TODO: fix multiline text alignment when not in ALIGN_LEFT mode
-void setString(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *f, char *str, uint8_t color, align_t align)
-{
-	uint8_t xp=0, w=0;
-
-    //get width
-    for(uint8_t i=0; i<strlen(str); i++)
-		w+=f->symbol[str[i]-' '].width;
-
-	switch(align)
-	{
-		case ALIGN_LEFT:
-			xp=0;
-		break;
-
-		case ALIGN_CENTER:
-			xp=(RES_X-w)/2+1;
-		break;
-
-		case ALIGN_RIGHT:
-			xp=RES_X-w;
-		break;
-
-		case ALIGN_ARB:
-			xp=x;
-		break;
-
-		default: //ALIGN_LEFT
-			xp=0;
-        break;
-	}
-
-	for(uint8_t i=0; i<strlen(str); i++)
-	{
-		if(xp > RES_X-f->symbol[str[i]-' '].width)
-		{
-			y+=f->height+1;
-			xp=0; //ALIGN_LEFT
-		}
-
-		setChar(buff, xp, y, f, str[i], color);
-		xp+=f->symbol[str[i]-' '].width;
-	}
-
-	dispRefresh(buff);
-}
-
-void drawRect(uint8_t buff[DISP_BUFF_SIZ], uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill)
-{
-	x0 = (x0>=RES_X) ? RES_X-1 : x0;
-	y0 = (y0>=RES_Y) ? RES_Y-1 : y0;
-	x1 = (x1>=RES_X) ? RES_X-1 : x1;
-	y1 = (y1>=RES_Y) ? RES_Y-1 : y1;
-
-	if(fill)
-	{
-		for(uint8_t i=x0; i<=x1; i++)
-		{
-			for(uint8_t j=y0; j<=y1; j++)
-			{
-				setPixel(buff, i, j, color);
-            }
-		}
-	}
-	else
-	{
-		for(uint8_t i=x0; i<=x1; i++)
-		{
-			setPixel(buff, i, y0, color);
-			setPixel(buff, i, y1, color);
-		}
-		for(uint8_t i=y0+1; i<=y1-1; i++)
-		{
-			setPixel(buff, x0, i, color);
-			setPixel(buff, x1, i, color);
-        }
-    }
-
-	dispRefresh(buff);
-}
-
-void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
-{
-	char str[24];
-
-	dispClear(buff, 0);
-
-	sprintf(str, "%s", (dev_settings.channel.mode==RF_MODE_4FSK)?"M17":"FM");
-	setString(buff, 0, 0, &nokia_small, str, 0, ALIGN_LEFT);
-
-	setString(buff, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
-
-	sprintf(str, "R %ld.%04ld",
-			dev_settings.channel.rx_frequency/1000000,
-			(dev_settings.channel.rx_frequency - (dev_settings.channel.rx_frequency/1000000)*1000000)/100);
-	setString(buff, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
-
-	sprintf(str, "T %ld.%04ld",
-			dev_settings.channel.tx_frequency/1000000,
-			(dev_settings.channel.tx_frequency - (dev_settings.channel.tx_frequency/1000000)*1000000)/100);
-	setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
-
-	//is the battery charging? (read /CHG signal)
-	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
-	{
-		setString(buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display charging status
-	}
-	else
-	{
-		char u_batt_str[8];
-		uint16_t u_batt=getBattVoltage();
-		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
-		setString(buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT); //display voltage
-	}
-}
-
-void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *callsign)
-{
-	setBacklight(0);
-
-	setString(buff, 0, 9, &nokia_big, line1, 0, ALIGN_CENTER);
-	setString(buff, 0, 22, &nokia_big, line2, 0, ALIGN_CENTER);
-	setString(buff, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
-
-	//fade in
-	if(dev_settings.backlight_always==1)
-	{
-		for(uint16_t i=0; i<dev_settings.backlight_level; i++)
-		{
-			setBacklight(i);
-			HAL_Delay(5);
-		}
-	}
-}
-
-void showTextMessageEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
-{
-	dispClear(buff, 0);
-
-	if(text_mode==TEXT_LOWERCASE)
-		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
-	else if(text_mode==TEXT_UPPERCASE)
-		setString(buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
-	else //if (text_mode==TEXT_T9)
-		setString(buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
-
-	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
-}
-
-void showTextValueEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
-{
-	dispClear(buff, 0);
-
-	if(text_mode==TEXT_LOWERCASE)
-		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
-	else if(text_mode==TEXT_UPPERCASE)
-		setString(buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
-	else //if (text_mode==TEXT_T9)
-		setString(buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
-
-	drawRect(buff, 0, 9, RES_X-1, RES_Y-11, 0, 0);
-
-	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Ok", 0, ALIGN_CENTER);
-}
-
-//show menu with item highlighting
-//start_item - absolute index of first item to display
-//h_item - item to highlight, relative value: 0..3
-void showMenu(uint8_t buff[DISP_BUFF_SIZ], disp_t menu, uint8_t start_item, uint8_t h_item)
-{
-    dispClear(buff, 0);
-
-    setString(buff, 0, 0, &nokia_small_bold, menu.title, 0, ALIGN_CENTER);
-
-    for(uint8_t i=0; i<start_item+menu.num_items && i<4; i++)
-    {
-    	//highlight
-    	if(i==h_item)
-    		drawRect(buff, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
-
-    	setString(buff, 1, (i+1)*9, &nokia_small, menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
-    	if(menu.value[i+start_item][0]!=0)
-    		setString(buff, 0, (i+1)*9, &nokia_small, menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
-    }
 }
 
 //messaging - initialize text packet transmission
@@ -984,7 +622,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				memset(text_entry, 0, strlen(text_entry));
 
 				*disp_state = next_disp;
-				showMenu(buff, displays[*disp_state], 0, 0);
+				showMenu(&hspi1, buff, displays[*disp_state], 0, 0);
 			}
 
 			//main menu
@@ -994,17 +632,17 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 				if(item==0) //"Messaging"
 				{
-					showTextMessageEntry(buff, *text_mode);
+					showTextMessageEntry(&hspi1, buff, *text_mode);
 				}
 				else if(item==1) //"Settings"
 				{
 					//load settings from NVMEM
 					loadDeviceSettings(dev_settings, &def_dev_settings);
-					showMenu(buff, displays[*disp_state], 0, 0);
+					showMenu(&hspi1, buff, displays[*disp_state], 0, 0);
 				}
 				else
 				{
-					showMenu(buff, displays[*disp_state], 0, 0);
+					showMenu(&hspi1, buff, displays[*disp_state], 0, 0);
 				}
 			}
 
@@ -1018,7 +656,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 				//all menu entries are editable
 				*disp_state = next_disp;
-				showTextValueEntry(buff, *text_mode);
+				showTextValueEntry(&hspi1, buff, *text_mode);
 			}
 
 			//M17 settings
@@ -1033,7 +671,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 				//all menu entries are editable
 				*disp_state = next_disp;
-				showTextValueEntry(buff, *text_mode);
+				showTextValueEntry(&hspi1, buff, *text_mode);
 			}
 
 			//text message entry - send message
@@ -1100,7 +738,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
 
 				*disp_state = DISP_MAIN_SCR;
-				showMainScreen(buff);
+				showMainScreen(&hspi1, buff);
 			}
 
 			//debug menu
@@ -1124,7 +762,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				if(next_disp!=DISP_NONE)
 				{
 					*disp_state = next_disp;
-					showMenu(buff, displays[*disp_state], 0, 0);
+					showMenu(&hspi1, buff, displays[*disp_state], 0, 0);
 				}
 			}
 
@@ -1153,7 +791,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
 				*disp_state = next_disp;
-				showMainScreen(buff);
+				showMainScreen(&hspi1, buff);
 		    }
 
 			//text message entry
@@ -1168,13 +806,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 					if (*code)
 						memset(code, 0, strlen(code)); // clear T9 code only when required
 
-					drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-					setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+					drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+					setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 				}
 				else
 				{
 					*disp_state = next_disp;
-					showMenu(buff, displays[*disp_state], 0, 0);
+					showMenu(&hspi1, buff, displays[*disp_state], 0, 0);
 				}
 			}
 
@@ -1190,13 +828,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 					if (*code)
 						memset(code, 0, strlen(code)); // clear T9 code only when required
 
-					drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-					setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+					drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+					setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 				}
 				else
 				{
 					*disp_state = next_disp;
-					showMainScreen(buff);
+					showMainScreen(&hspi1, buff);
 				}
 			}
 
@@ -1204,7 +842,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 			else
 			{
 				*disp_state = displays[*disp_state].prev_disp;
-				showMenu(buff, displays[*disp_state], 0, 0);
+				showMenu(&hspi1, buff, displays[*disp_state], 0, 0);
 			}
 
 			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
@@ -1223,8 +861,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 					sprintf(str, "T %ld.%04ld",
 							dev_settings->channel.tx_frequency/1000000,
 							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
-					drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
-					setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+					drawRect(&hspi1, buff, 0, 36, RES_X-1, 36+8, 1, 1);
+					setString(&hspi1, buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 				}
 				else// if(dev_settings->tuning_mode==TUNING_MEM)
 				{
@@ -1258,7 +896,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				}
 
 				//no state change
-				showMenu(buff, displays[*disp_state], menu_pos, menu_pos_hl);
+				showMenu(&hspi1, buff, displays[*disp_state], menu_pos, menu_pos_hl);
 			}
 
 			else
@@ -1280,8 +918,8 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 					sprintf(str, "T %ld.%04ld",
 							dev_settings->channel.tx_frequency/1000000,
 							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
-					drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
-					setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+					drawRect(&hspi1, buff, 0, 36, RES_X-1, 36+8, 1, 1);
+					setString(&hspi1, buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 				}
 				else// if(dev_settings->tuning_mode==TUNING_MEM)
 				{
@@ -1327,7 +965,7 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				}
 
 				//no state change
-				showMenu(buff, displays[*disp_state], menu_pos, menu_pos_hl);
+				showMenu(&hspi1, buff, displays[*disp_state], menu_pos, menu_pos_hl);
 			}
 
 			//else
@@ -1352,13 +990,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1378,13 +1016,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1404,13 +1042,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1430,13 +1068,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1456,13 +1094,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1482,13 +1120,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1508,13 +1146,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1534,13 +1172,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1560,13 +1198,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1586,13 +1224,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1615,13 +1253,13 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				drawRect(&hspi1, buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+				setString(&hspi1, buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				drawRect(&hspi1, buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+				setString(&hspi1, buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
 			}
 		break;
 
@@ -1635,14 +1273,14 @@ void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
 				else
 					*text_mode = TEXT_LOWERCASE;
 
-				drawRect(buff, 0, 0, 15, 8, 1, 1);
+				drawRect(&hspi1, buff, 0, 0, 15, 8, 1, 1);
 
 				if(*text_mode==TEXT_LOWERCASE)
-					setString(buff, 0, 0, &nokia_small, (char*)"abc", 0, ALIGN_LEFT);
+					setString(&hspi1, buff, 0, 0, &nokia_small, (char*)"abc", 0, ALIGN_LEFT);
 				else if(*text_mode==TEXT_UPPERCASE)
-					setString(buff, 0, 0, &nokia_small, (char*)"ABC", 0, ALIGN_LEFT);
+					setString(&hspi1, buff, 0, 0, &nokia_small, (char*)"ABC", 0, ALIGN_LEFT);
 				else
-					setString(buff, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
+					setString(&hspi1, buff, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
 			}
 		break;
 
@@ -2216,8 +1854,8 @@ int main(void)
   HAL_Delay(200);
 
   //init display
-  dispInit();
-  dispClear(disp_buff, 0);
+  dispInit(&hspi1);
+  dispClear(&hspi1, disp_buff, 0);
   setBacklight(0);
 
   //load settings from NVMEM
@@ -2236,7 +1874,7 @@ int main(void)
 
   //display splash screen
   curr_disp_state = DISP_SPLASH;
-  dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
+  dispSplash(&hspi1, disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
 
   //init SA868S RF module
   radio_state = RF_RX;
@@ -2263,7 +1901,7 @@ int main(void)
 
   //menu init
   curr_disp_state = DISP_MAIN_SCR;
-  showMainScreen(disp_buff);
+  showMainScreen(&hspi1, disp_buff);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -2281,12 +1919,12 @@ int main(void)
 	  if(r%100==0 && curr_disp_state==DISP_MAIN_SCR)
 	  {
 		  //clear the upper right portion of the screen
-		  drawRect(disp_buff, RES_X-1-15, 0, RES_X-1, 8, 1, 1);
+		  drawRect(&hspi1, disp_buff, RES_X-1-15, 0, RES_X-1, 8, 1, 1);
 
 		  //is the battery charging? (read /CHG signal)
 		  if(!(CHG_GPIO_Port->IDR & CHG_Pin))
 		  {
-			  setString(disp_buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT);
+			  setString(&hspi1, disp_buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT);
 		  }
 		  else
 		  {
@@ -2296,7 +1934,7 @@ int main(void)
 				  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
 			  else
 				  sprintf(u_batt_str, "Lo");
-			  setString(disp_buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
+			  setString(&hspi1, disp_buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
 		  }
 	  }
 
@@ -2308,8 +1946,8 @@ int main(void)
 
 		  if(frame_cnt==0)
 		  {
-			  dispClear(disp_buff, 0);
-			  setString(disp_buff, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+			  dispClear(&hspi1, disp_buff, 0);
+			  setString(&hspi1, disp_buff, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
 
 			  chBwRF(dev_settings.channel.ch_bw); //TODO: get rid of this workaround
 
@@ -2375,7 +2013,7 @@ int main(void)
 			  frame_cnt=0;
 
 			  curr_disp_state = DISP_MAIN_SCR;
-			  showMainScreen(disp_buff);
+			  showMainScreen(&hspi1, disp_buff);
 
 			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
 			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);

@@ -1,0 +1,270 @@
+#include "display.h"
+
+void dispWrite(SPI_HandleTypeDef *spi, uint8_t dc, uint8_t val)
+{
+	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, dc);
+
+	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 0);
+	HAL_SPI_Transmit(spi, &val, 1, 10);
+	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
+}
+
+void dispInit(SPI_HandleTypeDef *spi)
+{
+	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, 1);
+	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
+	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1);
+
+	//toggle LCD reset
+	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 0); //RES low
+	HAL_Delay(10);
+	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1); //RES high
+	HAL_Delay(10);
+
+	dispWrite(spi, 0, 0x21);			//extended commands
+	dispWrite(spi, 0, 0x80|0x48);		//contrast (0x00 to 0x7F)
+	dispWrite(spi, 0, 0x06);			//temp coeff.
+	dispWrite(spi, 0, 0x13);			//LCD bias 1:48
+	dispWrite(spi, 0, 0x20);			//standard commands
+	dispWrite(spi, 0, 0x0C);			//normal mode
+}
+
+void dispGotoXY(SPI_HandleTypeDef *spi, uint8_t x, uint8_t y)
+{
+	dispWrite(spi, 0, 0x80|(6*x));
+	dispWrite(spi, 0, 0x40|y);
+}
+
+void dispRefresh(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ])
+{
+	dispGotoXY(spi, 0, 0);
+
+	for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
+		dispWrite(spi, 1, buff[i]);
+}
+
+void dispClear(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], uint8_t fill)
+{
+	uint8_t val = fill ? 0xFF : 0;
+
+	memset(buff, val, DISP_BUFF_SIZ);
+
+	dispGotoXY(spi, 0, 0);
+
+    for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
+    	dispWrite(spi, 1, val);
+}
+
+void setPixel(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, uint8_t set)
+{
+	if(x<RES_X && y<RES_Y)
+	{
+		uint16_t loc = x + (y/8)*RES_X;
+
+		if(!set)
+			buff[loc] |= (1<<(y%8));
+		else
+			buff[loc] &= ~(1<<(y%8));
+	}
+}
+
+void setChar(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color)
+{
+	uint8_t h=f->height;
+	c-=' ';
+
+	for(uint8_t i=0; i<h; i++)
+	{
+		for(uint8_t j=0; j<f->symbol[(uint8_t)c].width; j++)
+		{
+			if(f->symbol[(uint8_t)c].rows[i] & 1<<(((h>8)?(h+3):(h))-1-j)) //fonts are right-aligned
+				setPixel(buff, x+j, y+i, color);
+		}
+	}
+}
+
+//TODO: fix multiline text alignment when not in ALIGN_LEFT mode
+void setString(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *f, char *str, uint8_t color, align_t align)
+{
+	uint8_t xp=0, w=0;
+
+    //get width
+    for(uint8_t i=0; i<strlen(str); i++)
+		w+=f->symbol[str[i]-' '].width;
+
+	switch(align)
+	{
+		case ALIGN_LEFT:
+			xp=0;
+		break;
+
+		case ALIGN_CENTER:
+			xp=(RES_X-w)/2+1;
+		break;
+
+		case ALIGN_RIGHT:
+			xp=RES_X-w;
+		break;
+
+		case ALIGN_ARB:
+			xp=x;
+		break;
+
+		default: //ALIGN_LEFT
+			xp=0;
+        break;
+	}
+
+	for(uint8_t i=0; i<strlen(str); i++)
+	{
+		if(xp > RES_X-f->symbol[str[i]-' '].width)
+		{
+			y+=f->height+1;
+			xp=0; //ALIGN_LEFT
+		}
+
+		setChar(buff, xp, y, f, str[i], color);
+		xp+=f->symbol[str[i]-' '].width;
+	}
+
+	dispRefresh(spi, buff);
+}
+
+void drawRect(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill)
+{
+	x0 = (x0>=RES_X) ? RES_X-1 : x0;
+	y0 = (y0>=RES_Y) ? RES_Y-1 : y0;
+	x1 = (x1>=RES_X) ? RES_X-1 : x1;
+	y1 = (y1>=RES_Y) ? RES_Y-1 : y1;
+
+	if(fill)
+	{
+		for(uint8_t i=x0; i<=x1; i++)
+		{
+			for(uint8_t j=y0; j<=y1; j++)
+			{
+				setPixel(buff, i, j, color);
+            }
+		}
+	}
+	else
+	{
+		for(uint8_t i=x0; i<=x1; i++)
+		{
+			setPixel(buff, i, y0, color);
+			setPixel(buff, i, y1, color);
+		}
+		for(uint8_t i=y0+1; i<=y1-1; i++)
+		{
+			setPixel(buff, x0, i, color);
+			setPixel(buff, x1, i, color);
+        }
+    }
+
+	dispRefresh(spi, buff);
+}
+
+void showMainScreen(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ])
+{
+	char str[24];
+
+	dispClear(spi, buff, 0);
+
+	sprintf(str, "%s", (dev_settings.channel.mode==RF_MODE_4FSK)?"M17":"FM");
+	setString(spi, buff, 0, 0, &nokia_small, str, 0, ALIGN_LEFT);
+
+	setString(spi, buff, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
+
+	sprintf(str, "R %ld.%04ld",
+			dev_settings.channel.rx_frequency/1000000,
+			(dev_settings.channel.rx_frequency - (dev_settings.channel.rx_frequency/1000000)*1000000)/100);
+	setString(spi, buff, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
+
+	sprintf(str, "T %ld.%04ld",
+			dev_settings.channel.tx_frequency/1000000,
+			(dev_settings.channel.tx_frequency - (dev_settings.channel.tx_frequency/1000000)*1000000)/100);
+	setString(spi, buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+
+	//is the battery charging? (read /CHG signal)
+	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
+	{
+		setString(spi, buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display charging status
+	}
+	else
+	{
+		char u_batt_str[8];
+		uint16_t u_batt = getBattVoltage();
+		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
+		setString(spi, buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT); //display voltage
+	}
+}
+
+void dispSplash(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *callsign)
+{
+	setBacklight(0);
+
+	setString(spi, buff, 0, 9, &nokia_big, line1, 0, ALIGN_CENTER);
+	setString(spi, buff, 0, 22, &nokia_big, line2, 0, ALIGN_CENTER);
+	setString(spi, buff, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
+
+	//fade in
+	if(dev_settings.backlight_always==1)
+	{
+		for(uint16_t i=0; i<dev_settings.backlight_level; i++)
+		{
+			setBacklight(i);
+			HAL_Delay(5);
+		}
+	}
+}
+
+void showTextMessageEntry(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
+{
+	dispClear(spi, buff, 0);
+
+	if(text_mode==TEXT_LOWERCASE)
+		setString(spi, buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
+	else if(text_mode==TEXT_UPPERCASE)
+		setString(spi, buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
+	else if (text_mode==TEXT_T9)
+		setString(spi, buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
+
+	setString(spi, buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
+}
+
+void showTextValueEntry(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
+{
+	dispClear(spi, buff, 0);
+
+	if(text_mode==TEXT_LOWERCASE)
+		setString(spi, buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
+	else if(text_mode==TEXT_UPPERCASE)
+		setString(spi, buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
+	else if (text_mode==TEXT_T9)
+		setString(spi, buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
+
+	drawRect(spi, buff, 0, 9, RES_X-1, RES_Y-11, 0, 0);
+
+	setString(spi, buff, 0, RES_Y-8, &nokia_small_bold, "Ok", 0, ALIGN_CENTER);
+}
+
+//show menu with item highlighting
+//start_item - absolute index of first item to display
+//h_item - item to highlight, relative value: 0..3
+void showMenu(SPI_HandleTypeDef *spi, uint8_t buff[DISP_BUFF_SIZ], disp_t menu, uint8_t start_item, uint8_t h_item)
+{
+    dispClear(spi, buff, 0);
+
+    setString(spi, buff, 0, 0, &nokia_small_bold, menu.title, 0, ALIGN_CENTER);
+
+    for(uint8_t i=0; i<start_item+menu.num_items && i<4; i++)
+    {
+    	//highlight
+    	if(i==h_item)
+    		drawRect(spi, buff, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
+
+    	setString(spi, buff, 1, (i+1)*9, &nokia_small, menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
+    	if(menu.value[i+start_item][0]!=0)
+    		setString(spi, buff, 0, (i+1)*9, &nokia_small, menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
+    }
+}
