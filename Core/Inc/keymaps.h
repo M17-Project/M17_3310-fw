@@ -1,7 +1,10 @@
 #ifndef INC_KEYMAPS_H_
 #define INC_KEYMAPS_H_
 
-extern const char key_map_uc[11][15];
-extern const char key_map_lc[11][15];
+#define KEYMAP_ROWS 11
+#define KEYMAP_COLS 15
+
+extern const char key_map_lc[KEYMAP_ROWS][KEYMAP_COLS];
+extern const char key_map_uc[KEYMAP_ROWS][KEYMAP_COLS];
 
 #endif /* INC_KEYMAPS_H_ */
