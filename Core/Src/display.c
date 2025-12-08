@@ -223,11 +223,11 @@ void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 	dispClear(disp_dev, 0);
 
 	if(text_mode==TEXT_LOWERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"abc", 0, ALIGN_LEFT);
 	else if(text_mode==TEXT_UPPERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"ABC", 0, ALIGN_LEFT);
 	else if (text_mode==TEXT_T9)
-		setString(disp_dev, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"T9", 0, ALIGN_LEFT);
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
 }
@@ -237,11 +237,11 @@ void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 	dispClear(disp_dev, 0);
 
 	if(text_mode==TEXT_LOWERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"abc", 0, ALIGN_LEFT);
 	else if(text_mode==TEXT_UPPERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"ABC", 0, ALIGN_LEFT);
 	else if (text_mode==TEXT_T9)
-		setString(disp_dev, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"T9", 0, ALIGN_LEFT);
 
 	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, 0, 0);
 

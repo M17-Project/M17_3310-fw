@@ -545,14 +545,6 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		break;
 
 		case KEY_1:
-		case KEY_2:
-		case KEY_3:
-		case KEY_4:
-		case KEY_5:
-		case KEY_6:
-		case KEY_7:
-		case KEY_8:
-		case KEY_9:
 			if(*text_mode==TEXT_LOWERCASE)
 			{
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
@@ -563,7 +555,9 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				pushCharT9(text_entry, code, key);
+				if (*code)
+					memset(code, 0, strlen(code)); // clear the T9 code if needed
+				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
@@ -578,6 +572,15 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 		break;
 
+		//T9 keys
+		case KEY_2:
+		case KEY_3:
+		case KEY_4:
+		case KEY_5:
+		case KEY_6:
+		case KEY_7:
+		case KEY_8:
+		case KEY_9:
 		case KEY_ASTERISK:
 			if(*text_mode==TEXT_LOWERCASE)
 			{
@@ -587,7 +590,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				pushCharBuffer(text_entry, *text_mode, key_map_uc, key);
 			}
-			else //(*text_mode==TEXT_T9)
+			else //if (*text_mode==TEXT_T9)
 			{
 				pushCharT9(text_entry, code, key);
 			}
@@ -643,14 +646,14 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				else
 					*text_mode = TEXT_LOWERCASE;
 
-				drawRect(disp_dev, 0, 0, 15, 8, 1, 1);
+				drawRect(disp_dev, 0, 0, 21, 8, 1, 1);
 
 				if(*text_mode==TEXT_LOWERCASE)
-					setString(disp_dev, 0, 0, &nokia_small, (char*)"abc", 0, ALIGN_LEFT);
+					setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"abc", 0, ALIGN_LEFT);
 				else if(*text_mode==TEXT_UPPERCASE)
-					setString(disp_dev, 0, 0, &nokia_small, (char*)"ABC", 0, ALIGN_LEFT);
+					setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"ABC", 0, ALIGN_LEFT);
 				else
-					setString(disp_dev, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
+					setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"T9", 0, ALIGN_LEFT);
 			}
 		break;
 

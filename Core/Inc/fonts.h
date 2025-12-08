@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+#define ICON_ENVELOPE	"\x80"
+#define ICON_PEN		"\x81"
+
 typedef struct
 {
 	uint8_t width;
