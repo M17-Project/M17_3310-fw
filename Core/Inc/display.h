@@ -32,13 +32,17 @@ void dispRefresh(disp_dev_t *disp_dev);
 void dispClear(disp_dev_t *disp_dev, uint8_t fill);
 void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set);
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color);
-void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char *str, uint8_t color, align_t align);
+void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align);
 
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill);
 void showMainScreen(disp_dev_t *disp_dev);
-void dispSplash(disp_dev_t *disp_dev, char *line1, char *line2, char *callsign);
+void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, const char *callsign);
 void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode);
 void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode);
+
+void redrawMsgEntry(disp_dev_t *disp_dev, const char *text);
+void redrawValueEntry(disp_dev_t *disp_dev, const char *text);
+
 void showMenu(disp_dev_t *disp_dev, disp_t menu, uint8_t start_item, uint8_t h_item);
 
 #endif /* INC_DISPLAY_H_ */

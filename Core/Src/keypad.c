@@ -7,6 +7,12 @@ const char *addCode(char *code, char symbol)
 	return getWord(dict, code);
 }
 
+void clearCode(char *code)
+{
+	if (code && *code)
+		memset(code, 0, strlen(code));
+}
+
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
 kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 {
@@ -154,8 +160,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
 		kbd_key_t key, edit_set_t *edit_set)
 {
+	if (key==KEY_NONE)
+		return;
+
 	//backlight on
-	if(key!=KEY_NONE && dev_settings->backlight_always==0)
+	if(dev_settings->backlight_always==0)
 	{
 		if(TIM14->CNT==0)
 		{
@@ -367,12 +376,13 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
+				uint8_t len = strlen(text_entry);
+
 				//backspace
-				if(strlen(text_entry)>0)
+				if(len)
 				{
-					//memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
-					text_entry[strlen(text_entry)-1] = 0;
-					pos=strlen(text_entry);
+					text_entry[len-1] = 0;
+					pos = len - 1;
 					if (*code)
 						memset(code, 0, strlen(code)); // clear T9 code only when required
 
@@ -389,12 +399,13 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//text value entry
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
+				uint8_t len = strlen(text_entry);
+
 				//backspace
-				if(strlen(text_entry)>0)
+				if(len)
 				{
-					//memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
-					text_entry[strlen(text_entry)-1] = 0;
-					pos=strlen(text_entry);
+					text_entry[len-1] = 0;
+					pos = len - 1;
 					if (*code)
 						memset(code, 0, strlen(code)); // clear T9 code only when required
 
@@ -555,20 +566,17 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				if (*code)
-					memset(code, 0, strlen(code)); // clear the T9 code if needed
+				clearCode(code); // clear the T9 code if needed
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(disp_dev, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				redrawMsgEntry(disp_dev, text_entry);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(disp_dev, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				redrawValueEntry(disp_dev, text_entry);
 			}
 		break;
 
@@ -597,13 +605,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(disp_dev, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				redrawMsgEntry(disp_dev, text_entry);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(disp_dev, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				redrawValueEntry(disp_dev, text_entry);
 			}
 		break;
 
@@ -618,21 +624,18 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				if (*code)
-					memset(code, 0, strlen(code)); // clear the T9 code if needed
+				clearCode(code); // clear the T9 code if needed
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
 
 			if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(disp_dev, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
+				redrawMsgEntry(disp_dev, text_entry);
 			}
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(disp_dev, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
+				redrawValueEntry(disp_dev, text_entry);
 			}
 		break;
 

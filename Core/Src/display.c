@@ -84,12 +84,13 @@ void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c
 }
 
 //TODO: fix multiline text alignment when not in ALIGN_LEFT mode
-void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char *str, uint8_t color, align_t align)
+void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align)
 {
 	uint8_t xp=0, w=0;
+	uint8_t len = strlen(str);
 
     //get width
-    for(uint8_t i=0; i<strlen(str); i++)
+    for(uint8_t i=0; i<len; i++)
 		w+=f->symbol[str[i]-' '].width;
 
 	switch(align)
@@ -115,7 +116,7 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char
         break;
 	}
 
-	for(uint8_t i=0; i<strlen(str); i++)
+	for(uint8_t i=0; i<len; i++)
 	{
 		if(xp > RES_X-f->symbol[str[i]-' '].width)
 		{
@@ -199,7 +200,7 @@ void showMainScreen(disp_dev_t *disp_dev)
 	}
 }
 
-void dispSplash(disp_dev_t *disp_dev, char *line1, char *line2, char *callsign)
+void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, const char *callsign)
 {
 	setBacklight(0);
 
@@ -246,6 +247,18 @@ void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, 0, 0);
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Ok", 0, ALIGN_CENTER);
+}
+
+void redrawMsgEntry(disp_dev_t *disp_dev, const char *text)
+{
+    drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+    setString(disp_dev, 0, 10, &nokia_small, text, 0, ALIGN_LEFT);
+}
+
+void redrawValueEntry(disp_dev_t *disp_dev, const char *text)
+{
+    drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+    setString(disp_dev, 3, 13, &nokia_big, text, 0, ALIGN_ARB);
 }
 
 //show menu with item highlighting
