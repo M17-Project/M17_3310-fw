@@ -39,6 +39,7 @@ void showMainScreen(disp_dev_t *disp_dev);
 void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, const char *callsign);
 void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode);
 void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode);
+void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode);
 
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text);
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text);

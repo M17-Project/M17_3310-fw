@@ -649,14 +649,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				else
 					*text_mode = TEXT_LOWERCASE;
 
-				drawRect(disp_dev, 0, 0, 21, 8, 1, 1);
-
-				if(*text_mode==TEXT_LOWERCASE)
-					setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"abc", 0, ALIGN_LEFT);
-				else if(*text_mode==TEXT_UPPERCASE)
-					setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"ABC", 0, ALIGN_LEFT);
-				else
-					setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"T9", 0, ALIGN_LEFT);
+				redrawTextEntryIcon(disp_dev, *text_mode);
 			}
 		break;
 

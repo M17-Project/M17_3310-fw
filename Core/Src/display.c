@@ -223,12 +223,7 @@ void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 {
 	dispClear(disp_dev, 0);
 
-	if(text_mode==TEXT_LOWERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"abc", 0, ALIGN_LEFT);
-	else if(text_mode==TEXT_UPPERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"ABC", 0, ALIGN_LEFT);
-	else if (text_mode==TEXT_T9)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"T9", 0, ALIGN_LEFT);
+	redrawTextEntryIcon(disp_dev, text_mode);
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
 }
@@ -237,18 +232,14 @@ void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 {
 	dispClear(disp_dev, 0);
 
-	if(text_mode==TEXT_LOWERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"abc", 0, ALIGN_LEFT);
-	else if(text_mode==TEXT_UPPERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"ABC", 0, ALIGN_LEFT);
-	else if (text_mode==TEXT_T9)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN"T9", 0, ALIGN_LEFT);
+	redrawTextEntryIcon(disp_dev, text_mode);
 
 	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, 0, 0);
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Ok", 0, ALIGN_CENTER);
 }
 
+//for text messages
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text)
 {
     drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
@@ -259,6 +250,18 @@ void redrawValueEntry(disp_dev_t *disp_dev, const char *text)
 {
     drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
     setString(disp_dev, 3, 13, &nokia_big, text, 0, ALIGN_ARB);
+}
+
+void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
+{
+    drawRect(disp_dev, 0, 0, 21, 8, 1, 1);
+
+    if (mode == TEXT_LOWERCASE)
+        setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", 0, ALIGN_LEFT);
+    else if (mode == TEXT_UPPERCASE)
+        setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", 0, ALIGN_LEFT);
+    else
+        setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", 0, ALIGN_LEFT);
 }
 
 //show menu with item highlighting
