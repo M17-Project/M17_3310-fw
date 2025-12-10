@@ -792,7 +792,7 @@ int main(void)
 
 			  //find LSF
 			  float dist_lsf = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
-			  if(dist_lsf < 4.5)
+			  if(dist_lsf < 2.5)
 			  {
 				  //find L2 minimum
 				  sample_offset = 0;
@@ -810,21 +810,22 @@ int main(void)
 					  }
 				  }
 
-				  dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist_lsf);
+				  //dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist_lsf);
 
 				  str_syncd = 1;
 			  }
 		  }
 		  else
 		  {
-			  if (demodSamplesGetNum() >= SYM_PER_PLD*5+(5-sample_offset))
+			  if (demodSamplesGetNum() >= SYM_PER_PLD*5+sample_offset)
 			  {
-				  // we need to omit 5-sample_offset first samples
-				  for (uint8_t i=0; i<5-sample_offset; i++)
+				  // we need to use the sample from sw_corr_samples[]
+				  pld_symbs[0] = sw_corr_samples[8*5+sample_offset];
+				  for (uint8_t i=0; i<sample_offset; i++)
 					  fltSample(demodSamplePop());
 
 				  // push the rest of the samples
-				  for (uint16_t i=0; i<SYM_PER_PLD; i++)
+				  for (uint16_t i=1; i<SYM_PER_PLD-1; i++)
 				  {
 					  pld_symbs[i] = -fltSample(demodSamplePop());
 					  for (uint8_t j=0; j<4; j++)
@@ -839,8 +840,8 @@ int main(void)
 
 				  dbg_print("%04X\n", fn);*/
 
-				  decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
-				  //float err = (float)e/0xFFFFU;
+				  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
+				  float err = (float)e/0xFFFFU;
 
 				  uint8_t call_dst[10], call_src[10], can;
 				  uint16_t type, crc;
@@ -853,15 +854,15 @@ int main(void)
 				  // if CRC matches data
 				  if (LSF_CRC(&lsf_rx)==crc)
 				  {
-					  dbg_print("[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
+					  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n ERR %.1f\n",
 							  call_src, call_dst, type, can,
 							  lsf_rx.meta[0], lsf_rx.meta[1], lsf_rx.meta[2], lsf_rx.meta[3],
 							  lsf_rx.meta[4], lsf_rx.meta[5], lsf_rx.meta[6], lsf_rx.meta[7],
 							  lsf_rx.meta[8], lsf_rx.meta[9], lsf_rx.meta[10], lsf_rx.meta[11],
-							  lsf_rx.meta[12], lsf_rx.meta[13]);
+							  lsf_rx.meta[12], lsf_rx.meta[13], err);
 				  }
 
-				  // work dne: clear old syncword detection buffer
+				  // work done: clear old syncword detection buffer
 				  memset(sw_corr_samples, 0, sizeof(sw_corr_samples));
 
 				  str_syncd=0;
