@@ -1,4 +1,3 @@
-#include <stdint.h>
 #include "ring.h"
 
 //ring buffer functions

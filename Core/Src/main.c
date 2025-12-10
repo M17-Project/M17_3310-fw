@@ -26,7 +26,7 @@
 #include "keymaps.h"
 #include "menus.h"
 #include "settings.h"
-#include "ring.h"
+//#include "ring.h"
 #include "display.h"
 #include "dsp.h"
 #include "platform.h"
@@ -43,7 +43,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-
+#define BSB_BUFF_SIZ (960*2)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,7 +53,9 @@
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
+DMA_HandleTypeDef hdma_adc2;
 
 DAC_HandleTypeDef hdac;
 DMA_HandleTypeDef hdma_dac1;
@@ -150,17 +152,13 @@ uint8_t debug_tx; //debug: transmit dummy signal?
 radio_state_t radio_state;
 
 //ADC
-volatile uint16_t adc_vals[2];
-volatile uint16_t bsb_cnt;
-uint16_t bsb_in[960*2];
+volatile uint16_t batt_adc;
+uint16_t raw_bsb_buff[BSB_BUFF_SIZ];
+volatile uint16_t raw_bsb_buff_tail;
+float sw_corr_samples[8*5+5];			// samples for syncword search
+float pld_symbs[SYM_PER_PLD];			// payload symbols
 
-ring_t raw_bsb_ring;
-uint16_t raw_bsb_buff[960];
-float flt_bsb_buff[8*5];		//TODO: hold extra 2 samples for L2 norm minimum lookup
-float pld_symbs[SYM_PER_PLD];	//payload symbols
-uint8_t num_pld_symbs;
-
-uint8_t sample_offset;	//location of the L2 minimum
+uint8_t sample_offset;	//location of the squared-L2 minimum
 uint8_t str_syncd;		//syncd with the incoming stream?
 /* USER CODE END PV */
 
@@ -179,6 +177,7 @@ static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM14_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_ADC2_Init(void);
 /* USER CODE BEGIN PFP */
 uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
 void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
@@ -186,6 +185,26 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint16_t demodGetHead(void)
+{
+    return (BSB_BUFF_SIZ - hadc1.DMA_Handle->Instance->NDTR) % BSB_BUFF_SIZ;
+}
+
+uint16_t demodSamplesGetNum(void)
+{
+    int16_t n = demodGetHead() - raw_bsb_buff_tail;
+    if (n < 0)
+    	n += BSB_BUFF_SIZ;
+    return n;
+}
+
+uint16_t demodSamplePop(void)
+{
+    uint16_t v = raw_bsb_buff[raw_bsb_buff_tail];
+    raw_bsb_buff_tail = (raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ;
+    return v;
+}
+
 //interrupts
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -230,23 +249,7 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 //ADC
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 {
-	//push raw baseband sample into a ring buffer
-	pushU16Value(&raw_bsb_ring, adc_vals[0]);
-
-	//TODO: debug stuff
-	/*bsb_in[bsb_cnt]=adc_vals[0];
-	bsb_cnt++;
-
-	//Debug: send the samples over UART
-	if(bsb_cnt==960)
-	{
-		CDC_Transmit_FS((uint8_t*)&bsb_in[0], 960*2);
-	}
-	else if(bsb_cnt==960*2)
-	{
-		CDC_Transmit_FS((uint8_t*)&bsb_in[960], 960*2);
-		bsb_cnt=0;
-	}*/
+	;//
 }
 
 /*void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
@@ -263,21 +266,15 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 
 uint16_t getBattVoltage(void)
 {
-	/*ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_1);
-	HAL_ADC_Start(&hadc1);
-	while(HAL_ADC_PollForConversion(&hadc1, 5)!=HAL_OK);*/
+	uint16_t v[2];
 
-	return adc_vals[1]/4095.0f * 3300.0f * 2.0f; //(ADC1->DR)/4095.0f * 3300.0f * 2.0f;
-}
+	do
+	{
+		v[0] = batt_adc;
+		v[1] = batt_adc;
+	} while (v[0] != v[1]);
 
-//get baseband sample - debug
-uint16_t getBasebandSample(void)
-{
-	/*ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_0);
-	HAL_ADC_Start(&hadc1);
-	while(HAL_ADC_PollForConversion(&hadc1, 0)!=HAL_OK);*/
-
-	return adc_vals[0]/4095.0f * 3300.0f; //(ADC1->DR)/4095.0f * 3300.0f;
+	return *v/4095.0f * 3300.0f * 2.0f;
 }
 
 //messaging - initialize text packet transmission
@@ -434,7 +431,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 {
 	//backlight timeout
 	//"blt=VALUE"
-	if(strstr((char*)str, "blt")==(char*)str)
+	if(strncmp((char*)str, "blt=", 4)==0)
 	{
 		dev_settings.backlight_timer=atoi(strstr((char*)str, "=")+1);
 		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
@@ -443,21 +440,21 @@ void parseUSB(uint8_t *str, uint32_t len)
 
 	//display backlight
 	//"bl=VALUE"
-	else if(strstr((char*)str, "bl")==(char*)str)
+	else if(strncmp((char*)str, "bl=", 3)==0)
 	{
 		setBacklight(atoi(strstr((char*)str, "=")+1));
 	}
 
 	//set frequency
 	//"freq=VALUE"
-	else if(strstr((char*)str, "freq")==(char*)str)
+	else if(strncmp((char*)str, "freq=", 5)==0)
 	{
 		setFreqRF(atoi(strstr((char*)str, "=")+1), dev_settings.freq_corr);
 	}
 
 	//read byte from the Flash memory
 	//"peek=ADDRESS"
-	else if(strstr((char*)str, "peek")==(char*)str)
+	else if(strncmp((char*)str, "peek=", 5)==0)
 	{
 		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
 		dbg_print("%08lX -> 0x%02X\n", addr, *((uint8_t*)addr));
@@ -465,7 +462,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 
 	//write byte to the Flash memory (use with caution)
 	//"poke=ADDRESS val=VALUE"
-	else if(strstr((char*)str, "poke")==(char*)str)
+	else if(strncmp((char*)str, "poke=", 5)==0)
 	{
 		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
 		uint8_t val = atoi(strstr((char*)str, "val=")+4);
@@ -479,21 +476,21 @@ void parseUSB(uint8_t *str, uint32_t len)
 
 	//load settings from nvmem
 	//"load"
-	else if(strstr((char*)str, "load")==(char*)str)
+	else if(strncmp((char*)str, "load", 4)==0)
 	{
 		loadDeviceSettings(&dev_settings, &def_dev_settings);
 	}
 
 	//erase Flash memory sector
 	//"erase"
-	else if(strstr((char*)str, "erase")==(char*)str)
+	else if(strncmp((char*)str, "erase", 5)==0)
 	{
 		eraseSector();
 	}
 
 	//set SRC callsign
 	//"src_call=STRING"
-	else if(strstr((char*)str, "src_call")==(char*)str)
+	else if(len<=(9+9) && strncmp((char*)str, "src_call=", 9)==0)
 	{
 		strcpy(dev_settings.src_callsign, strstr((char*)str, "=")+1);
 		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
@@ -501,22 +498,22 @@ void parseUSB(uint8_t *str, uint32_t len)
 
 	//set frequency correction
 	//"freq_corr=VALUE"
-	else if(strstr((char*)str, "f_corr")==(char*)str)
+	else if(strncmp((char*)str, "f_corr=", 7)==0)
 	{
 		dev_settings.freq_corr = atof(strstr((char*)str, "=")+1);
 		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
 	}
 
-	//send text message
+	//send text message, 200 bytes max for now
 	//"msg=STRING"
-	else if(strstr((char*)str, "msg")==(char*)str)
+	else if(len<(4+200) && strncmp((char*)str, "msg=", 4)==0)
 	{
 		strcpy(text_entry, strstr((char*)str, "=")+1);
 		initTextTX(text_entry);
 	}
 
 	//get LSF META field
-	else if(strstr((char*)str, "meta")==(char*)str)
+	else if(strncmp((char*)str, "meta?", 5)==0)
 	{
 		dbg_print("[Settings] META=");
 		for(uint8_t i=0; i<sizeof(lsf_tx.meta); i++)
@@ -571,6 +568,7 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM14_Init();
   MX_TIM8_Init();
+  MX_ADC2_Init();
   /* USER CODE BEGIN 2 */
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
   SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
@@ -613,11 +611,12 @@ int main(void)
   setRF(radio_state);
 
   //init ring buffer
-  initRing(&raw_bsb_ring, raw_bsb_buff, arrlen(raw_bsb_buff));
+  //initRing(&raw_bsb_ring, raw_bsb_buff, arrlen(raw_bsb_buff));
 
   //start ADC sampling
   chBwRF(RF_BW_25K); //TODO: get rid of this workaround
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
+  HAL_ADC_Start_DMA(&hadc2, (uint32_t*)&batt_adc, 1);
   HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in, batt. voltage sense)
 
   set_LSF(&lsf_tx, dev_settings.src_callsign, dev_settings.channel.dst,
@@ -747,7 +746,6 @@ int main(void)
 			  showMainScreen(&disp_dev);
 
 			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
-			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
 			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC sample clock
 		  }
 
@@ -767,87 +765,109 @@ int main(void)
 		  usb_drdy=0;
 	  }
 
-	  //check if there are any new baseband samples available
-	  uint16_t num_samples;
-	  if((num_samples=getNumItems(&raw_bsb_ring))>=400 && radio_state==RF_RX) //no specific reason to use 400 samples
+	  //tail==head - buffer overrun
+	  if ((raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ == demodGetHead()) {
+	      dbg_print("[Debug] Baseband buffer overrun!\n");
+	  }
+
+	  // repeat while there are baseband samples available
+	  while (demodSamplesGetNum() && radio_state==RF_RX)
 	  {
+		  /*uint16_t b[BSB_BUFF_SIZ];
 		  for(uint16_t i=0; i<num_samples; i++)
+			  b[i] = demodSamplePop();
+		  CDC_Transmit_FS((uint8_t*)b, num_samples*sizeof(uint16_t));*/
+
+		  if(!str_syncd)
 		  {
-			  if(!str_syncd)
+			  //consume sample
+			  for(uint16_t i=0; i<arrlen(sw_corr_samples)-1; i++)
+				  sw_corr_samples[i]=sw_corr_samples[i+1];
+			  sw_corr_samples[arrlen(sw_corr_samples)-1] = -fltSample(demodSamplePop());
+
+			  //squared-L2 check against syncword
+			  float symbols[8];
+			  for(uint8_t i=0; i<8; i++)
+				  symbols[i]=sw_corr_samples[i*5];
+
+			  //find LSF
+			  float dist_lsf = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
+			  if(dist_lsf < 4.5)
 			  {
-				  //consume sample
-				  for(uint16_t j=0; j<arrlen(flt_bsb_buff)-1; j++)
-					  flt_bsb_buff[j]=flt_bsb_buff[j+1];
-				  flt_bsb_buff[arrlen(flt_bsb_buff)-1] = -fltSample(popU16Value(&raw_bsb_ring));
-
-				  //L2 norm check against syncword
-				  float symbols[8];
-				  for(uint8_t j=0; j<8; j++)
-					  symbols[j]=flt_bsb_buff[j*5];
-
-				  //debug message
-				  float dist_lsf=eucl_norm(symbols, lsf_sync_symbols, 8);
-				  if(dist_lsf<4.5f)
+				  //find L2 minimum
+				  sample_offset = 0;
+				  for(uint8_t i=1; i<5; i++) // isn't 1 and 2 enough?
 				  {
-					  //find L2 minimum
-					  /*sample_offset=0;
-					  for(uint8_t j=1; j<=2; j++)
+					  for(uint8_t j=0; j<8; j++)
+						  symbols[j]=sw_corr_samples[i+j*5];
+
+					  float d = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
+
+					  if(d < dist_lsf)
 					  {
-						  for(uint8_t k=0; k<8; k++)
-							  symbols[k]=flt_bsb_buff[k*5+j];
-						  if(eucl_norm(symbols, lsf_sync_symbols, 8)<dist_lsf)
-							  sample_offset=j;
-					  }*/
-
-					  //dbg_print("[Debug] LSF syncword found at offset %d\n", sample_offset);
-					  str_syncd=1;
-				  }
-			  }
-			  else
-			  {
-				  //omit the remaining syncword samples
-				  //for(uint8_t i=0; i<2; i++)
-					  //fltSample(popU16Value(&raw_bsb_ring));
-
-				  //push sample to symbols buffer
-				  pld_symbs[num_pld_symbs] = -fltSample(popU16Value(&raw_bsb_ring));
-				  num_pld_symbs++;
-
-				  //omit 4 samples
-				  for(uint8_t i=0; i<4; i++)
-					  fltSample(popU16Value(&raw_bsb_ring));
-				  i+=4;
-
-				  if(num_pld_symbs==SYM_PER_PLD)
-				  {
-					  /*uint32_t e = */decode_LSF(&lsf_rx, pld_symbs);
-					  //float err = (float)e/0xFFFFU;
-
-					  uint8_t call_dst[10], call_src[10], can;
-					  uint16_t type, crc;
-					  decode_callsign_bytes(call_dst, lsf_rx.dst);
-					  decode_callsign_bytes(call_src, lsf_rx.src);
-					  type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
-					  can=(type>>7)&0xFU;
-					  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
-
-					  //if CRC matches data
-					  if(LSF_CRC(&lsf_rx)==crc)
-					  {
-						  dbg_print("[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: ",
-								  call_src, call_dst, type, can);
-						  for(uint8_t j=0; j<14; j++)
-							  dbg_print("%02X", lsf_rx.meta[j]);
-						  dbg_print("\n");
+						  sample_offset = i;
+						  dist_lsf = d;
 					  }
-
-					  num_pld_symbs=0;
-					  str_syncd=0;
 				  }
+
+				  dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist_lsf);
+
+				  str_syncd = 1;
+			  }
+		  }
+		  else
+		  {
+			  if (demodSamplesGetNum() >= SYM_PER_PLD*5+(5-sample_offset))
+			  {
+				  // we need to omit 5-sample_offset first samples
+				  for (uint8_t i=0; i<5-sample_offset; i++)
+					  fltSample(demodSamplePop());
+
+				  // push the rest of the samples
+				  for (uint16_t i=0; i<SYM_PER_PLD; i++)
+				  {
+					  pld_symbs[i] = -fltSample(demodSamplePop());
+					  for (uint8_t j=0; j<4; j++)
+						  fltSample(demodSamplePop());
+				  }
+
+				  /*uint8_t frame_data[16];
+				  uint8_t lich[5];
+				  uint16_t fn;
+				  uint8_t lich_cnt;
+				  decode_str_frame(frame_data, lich, &fn, &lich_cnt, pld_symbs);
+
+				  dbg_print("%04X\n", fn);*/
+
+				  decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
+				  //float err = (float)e/0xFFFFU;
+
+				  uint8_t call_dst[10], call_src[10], can;
+				  uint16_t type, crc;
+				  decode_callsign_bytes(call_dst, lsf_rx.dst);
+				  decode_callsign_bytes(call_src, lsf_rx.src);
+				  type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
+				  can=(type>>7)&0xFU;
+				  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
+
+				  // if CRC matches data
+				  if (LSF_CRC(&lsf_rx)==crc)
+				  {
+					  dbg_print("[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
+							  call_src, call_dst, type, can,
+							  lsf_rx.meta[0], lsf_rx.meta[1], lsf_rx.meta[2], lsf_rx.meta[3],
+							  lsf_rx.meta[4], lsf_rx.meta[5], lsf_rx.meta[6], lsf_rx.meta[7],
+							  lsf_rx.meta[8], lsf_rx.meta[9], lsf_rx.meta[10], lsf_rx.meta[11],
+							  lsf_rx.meta[12], lsf_rx.meta[13]);
+				  }
+
+				  // work dne: clear old syncword detection buffer
+				  memset(sw_corr_samples, 0, sizeof(sw_corr_samples));
+
+				  str_syncd=0;
 			  }
 		  }
 	  }
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -924,15 +944,15 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ScanConvMode = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DMAContinuousRequests = ENABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -947,18 +967,61 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief ADC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC2_Init(void)
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc2.Instance = ADC2;
+  hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc2.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc2.Init.ScanConvMode = DISABLE;
+  hadc2.Init.ContinuousConvMode = DISABLE;
+  hadc2.Init.DiscontinuousConvMode = DISABLE;
+  hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc2.Init.NbrOfConversion = 1;
+  hadc2.Init.DMAContinuousRequests = ENABLE;
+  hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
   sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = 2;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN ADC1_Init 2 */
+  /* USER CODE BEGIN ADC2_Init 2 */
 
-  /* USER CODE END ADC1_Init 2 */
+  /* USER CODE END ADC2_Init 2 */
 
 }
 
@@ -1444,6 +1507,9 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
 

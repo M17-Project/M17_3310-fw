@@ -3,21 +3,25 @@
 //RX baseband filtering (sps=5)
 float fltSample(const uint16_t sample)
 {
-	const float gain = 18.0f*1.8f/2048.0f/sqrtf(5.0f); //gain found experimentally
-	static int16_t sr[41];
+    const float gain = 18.0f*1.8f/2048.0f/sqrtf(5.0f);	// gain found experimentally
+    static int16_t sr[41];	// this used to be a shift register
+    static uint8_t w = 0;	// write pointer (0..40)
+    float acc = 0.0f;		// accumulator
+    uint8_t idx;			// buffer index
 
-	//push the shift register
-	for(uint8_t i=0; i<40; i++)
-		sr[i]=sr[i+1];
-	sr[40]=(int16_t)sample-2048; //push the sample, remove DC offset
+    sr[w] = (int16_t)sample - 2048;   // store newest sample (remove known DC offset)
+    idx = w;
 
-	float acc=0.0f;
-	for(uint8_t i=0; i<41; i++)
-	{
-		acc += (float)sr[i]*rrc_taps_5[i];
-	}
+    // apply FIR
+    for (uint8_t i = 0; i < 41; i++)
+    {
+        acc += (float)sr[idx] * rrc_taps_5[i];
+        idx = (idx + 1) % 41;  // move forward in circular buffer
+    }
 
-	return acc*gain;
+    w = (w + 1) % 41;   // advance write index
+
+    return acc * gain;
 }
 
 //flush RX baseband filter

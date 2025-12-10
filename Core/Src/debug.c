@@ -6,7 +6,7 @@ void dbg_print(const char* fmt, ...)
 	va_list ap;
 
 	va_start(ap, fmt);
-	vsprintf(str, fmt, ap);
+	vsnprintf(str, sizeof(str), fmt, ap);
 	va_end(ap);
 
 	CDC_Transmit_FS((uint8_t*)str, strlen(str));

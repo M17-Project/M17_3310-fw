@@ -1,6 +1,8 @@
 #ifndef INC_RING_H_
 #define INC_RING_H_
 
+#include <stdint.h>
+
 //ring buffer
 typedef struct ring
 {
