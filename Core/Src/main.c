@@ -766,7 +766,8 @@ int main(void)
 	  }
 
 	  //tail==head - buffer overrun
-	  if ((raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ == demodGetHead()) {
+	  if ((raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ == demodGetHead())
+	  {
 	      dbg_print("[Debug] Baseband buffer overrun!\n");
 	  }
 
