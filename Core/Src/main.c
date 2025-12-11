@@ -583,6 +583,12 @@ int main(void)
   HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
   HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out)
 
+  //start ADC sampling
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
+  HAL_ADC_Start_DMA(&hadc2, (uint32_t*)&batt_adc, 1);
+  HAL_TIM_Base_Start(&htim3); // 5Hz for battery voltage sampling
+  HAL_TIM_Base_Start(&htim8); // 24kHz - ADC (baseband in)
+
   HAL_Delay(200);
 
   //init display
@@ -613,16 +619,7 @@ int main(void)
   radio_state = RF_RX;
   initRF(dev_settings);
   setRF(radio_state);
-
-  //init ring buffer
-  //initRing(&raw_bsb_ring, raw_bsb_buff, arrlen(raw_bsb_buff));
-
-  //start ADC sampling
   chBwRF(RF_BW_25K); //TODO: get rid of this workaround
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
-  HAL_ADC_Start_DMA(&hadc2, (uint32_t*)&batt_adc, 1);
-  HAL_TIM_Base_Start(&htim3); // 5Hz for battery voltage sampling
-  HAL_TIM_Base_Start(&htim8); // 24kHz - ADC (baseband in)
 
   set_LSF(&lsf_tx, dev_settings.src_callsign, dev_settings.channel.dst,
 		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
