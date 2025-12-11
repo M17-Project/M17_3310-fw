@@ -1,5 +1,7 @@
 #include "keypad.h"
 
+static uint32_t next_key_time = 0;
+
 //T9 related
 const char *addCode(char *code, char symbol)
 {
@@ -16,19 +18,27 @@ void clearCode(char *code)
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
 kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 {
+	uint32_t now = HAL_GetTick();
+
+	// too early to report another key?
+	if (now < next_key_time)
+	    return KEY_NONE;
+
 	kbd_key_t key = KEY_NONE;
 
 	//PD2 down means KEY_OK is pressed
 	if(BTN_OK_GPIO_Port->IDR & BTN_OK_Pin)
 	{
 		if(radio_state==RF_RX)
-			HAL_Delay(rep);
-		return KEY_OK;
+		{
+			next_key_time = now + rep;
+			return KEY_OK;
+		}
 	}
 
 	//column 1
 	COL_1_GPIO_Port->BSRR = (uint32_t)COL_1_Pin;
-	HAL_Delay(1);
+	for (volatile uint8_t i=0; i<100; i++);
 	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
 		key = KEY_C;
 	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
@@ -40,16 +50,15 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_ASTERISK;
 	COL_1_GPIO_Port->BSRR = ((uint32_t)COL_1_Pin<<16);
-	if(key!=KEY_NONE)
+	if(key!=KEY_NONE && radio_state==RF_RX)
 	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
+		next_key_time = now + rep;
 		return key;
 	}
 
 	//column 2
 	COL_2_GPIO_Port->BSRR = (uint32_t)COL_2_Pin;
-	HAL_Delay(1);
+	for (volatile uint8_t i=0; i<100; i++);
 	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
 		key = KEY_LEFT;
 	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
@@ -61,16 +70,15 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_0;
 	COL_2_GPIO_Port->BSRR = ((uint32_t)COL_2_Pin<<16);
-	if(key!=KEY_NONE)
+	if(key!=KEY_NONE && radio_state==RF_RX)
 	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
+		next_key_time = now + rep;
 		return key;
 	}
 
 	//column 3
 	COL_3_GPIO_Port->BSRR = (uint32_t)COL_3_Pin;
-	HAL_Delay(1);
+	for (volatile uint8_t i=0; i<100; i++);
 	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
 		key = KEY_RIGHT;
 	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
@@ -82,10 +90,10 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_HASH;
 	COL_3_GPIO_Port->BSRR = ((uint32_t)COL_3_Pin<<16);
-	if(key!=KEY_NONE)
+	if(key!=KEY_NONE && radio_state==RF_RX)
 	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
+		next_key_time = now + rep;
+		return key;
 	}
 
 	return key;

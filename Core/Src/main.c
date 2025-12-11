@@ -66,6 +66,7 @@ SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim8;
@@ -74,8 +75,8 @@ TIM_HandleTypeDef htim14;
 UART_HandleTypeDef huart4;
 
 /* USER CODE BEGIN PV */
-//superloop rotation counter
-uint16_t r;
+//timing
+uint32_t t_now, t_last;
 
 //display
 uint8_t disp_buff[DISP_BUFF_SIZ];
@@ -178,6 +179,7 @@ static void MX_TIM6_Init(void);
 static void MX_TIM14_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_ADC2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
 void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
@@ -210,6 +212,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	//TIM1 - buzzer timer (by default at 1kHz)
 	//TIM2 - LED backlight PWM timer
+	//TIM3 - 5Hz ADC timer (battery voltage readout)
 	//TIM6 - 48kHz base timer (for the DAC)
 
 	//TIM7 - text entry timer
@@ -219,7 +222,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		TIM7->CNT=0;
 	}
 
-	//TIM8 - 24kHz baseband timer (for the ADC)
+	//TIM8 - 24kHz base timer (for the ADC)
 
 	//TIM14 - display backlight timeout timer
 	else if(htim->Instance==TIM14)
@@ -282,7 +285,7 @@ uint16_t getBattVoltage(void)
 void initTextTX(const char *message)
 {
 	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC sample clock
+	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
 
 	memset(payload, 0, 26);
 
@@ -310,7 +313,7 @@ void initTextTX(const char *message)
 void initDebugTX(void)
 {
 	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC sample clock
+	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
 
 	radio_state = RF_TX;
 	setRF(radio_state);
@@ -569,6 +572,7 @@ int main(void)
   MX_TIM14_Init();
   MX_TIM8_Init();
   MX_ADC2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
   SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
@@ -617,7 +621,8 @@ int main(void)
   chBwRF(RF_BW_25K); //TODO: get rid of this workaround
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)&batt_adc, 1);
-  HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in, batt. voltage sense)
+  HAL_TIM_Base_Start(&htim3); // 5Hz for battery voltage sampling
+  HAL_TIM_Base_Start(&htim8); // 24kHz - ADC (baseband in)
 
   set_LSF(&lsf_tx, dev_settings.src_callsign, dev_settings.channel.dst,
 		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
@@ -638,15 +643,15 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  //superloop rotation counter
-	  r++;
+	  //current tick
+	  t_now = HAL_GetTick();
 
 	  //handle key presses
 	  handleKey(&disp_dev, &curr_disp_state, text_entry, code,  &text_mode, &radio_state,
 			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
 
-	  //refresh main screen data
-	  if(r%100==0 && curr_disp_state==DISP_MAIN_SCR)
+	  //refresh main screen data TODO: fix the first refresh after boot up
+	  if(t_now-t_last>=1000 && curr_disp_state==DISP_MAIN_SCR)
 	  {
 		  //clear the upper right portion of the screen
 		  drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, 1, 1);
@@ -666,6 +671,8 @@ int main(void)
 				  sprintf(u_batt_str, "Lo");
 			  setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
 		  }
+
+		  t_last = HAL_GetTick();
 	  }
 
 	  //packet transfer triggered - start transmission
@@ -746,7 +753,7 @@ int main(void)
 			  showMainScreen(&disp_dev);
 
 			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
-			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC sample clock
+			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC baseband sample clock
 		  }
 
 		  frame_pend=0;
@@ -1002,7 +1009,7 @@ static void MX_ADC2_Init(void)
   hadc2.Init.ContinuousConvMode = DISABLE;
   hadc2.Init.DiscontinuousConvMode = DISABLE;
   hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
-  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
   hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
   hadc2.Init.NbrOfConversion = 1;
   hadc2.Init.DMAContinuousRequests = ENABLE;
@@ -1299,6 +1306,51 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 2000-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 16800-1;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
