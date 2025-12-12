@@ -26,7 +26,7 @@
 #include "keymaps.h"
 #include "menus.h"
 #include "settings.h"
-//#include "ring.h"
+#include "ring.h"
 #include "display.h"
 #include "dsp.h"
 #include "platform.h"
@@ -43,7 +43,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BSB_BUFF_SIZ (960*2)
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -154,8 +154,6 @@ radio_state_t radio_state;
 
 //ADC
 volatile uint16_t batt_adc;
-uint16_t raw_bsb_buff[BSB_BUFF_SIZ];
-volatile uint16_t raw_bsb_buff_tail;
 float sw_corr_samples[8*5+5];			// samples for syncword search
 float pld_symbs[SYM_PER_PLD];			// payload symbols
 
@@ -187,26 +185,6 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-uint16_t demodGetHead(void)
-{
-    return (BSB_BUFF_SIZ - hadc1.DMA_Handle->Instance->NDTR) % BSB_BUFF_SIZ;
-}
-
-uint16_t demodSamplesGetNum(void)
-{
-    int16_t n = demodGetHead() - raw_bsb_buff_tail;
-    if (n < 0)
-    	n += BSB_BUFF_SIZ;
-    return n;
-}
-
-uint16_t demodSamplePop(void)
-{
-    uint16_t v = raw_bsb_buff[raw_bsb_buff_tail];
-    raw_bsb_buff_tail = (raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ;
-    return v;
-}
-
 //interrupts
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
@@ -770,7 +748,7 @@ int main(void)
 	  }
 
 	  //tail==head - buffer overrun
-	  if ((raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ == demodGetHead())
+	  if (demodIsOverrun())
 	  {
 	      dbg_print("[Debug] Baseband buffer overrun!\n");
 	  }

@@ -1,82 +1,30 @@
 #include "ring.h"
 
+uint16_t raw_bsb_buff[BSB_BUFF_SIZ];
+volatile uint16_t raw_bsb_buff_tail;
+
 //ring buffer functions
-void initRing(ring_t *ring, void *buffer, uint16_t size)
+uint16_t demodGetHead(void)
 {
-    ring->buffer = buffer;
-    ring->size = size;
-    ring->wr_pos = 0;
-    ring->rd_pos = 0;
+    return (BSB_BUFF_SIZ - hadc1.DMA_Handle->Instance->NDTR) % BSB_BUFF_SIZ;
 }
 
-uint16_t getNumItems(ring_t *ring)
+uint8_t demodIsOverrun(void)
 {
-	return (ring->wr_pos - ring->rd_pos + ring->size) % ring->size;
+    return ((demodGetHead() + 1) % BSB_BUFF_SIZ) == raw_bsb_buff_tail;
 }
 
-uint16_t getSize(ring_t *ring)
+uint16_t demodSamplesGetNum(void)
 {
-    return ring->size;
+    int16_t n = demodGetHead() - raw_bsb_buff_tail;
+    if (n < 0)
+    	n += BSB_BUFF_SIZ;
+    return n;
 }
 
-uint8_t pushU16Value(ring_t *ring, uint16_t val)
+uint16_t demodSamplePop(void)
 {
-    uint16_t size = getSize(ring);
-
-    if(getNumItems(ring)<size)
-    {
-        ((uint16_t*)ring->buffer)[ring->wr_pos]=val;
-        ring->wr_pos = (ring->wr_pos+1) % size;
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
-uint16_t popU16Value(ring_t *ring)
-{
-    if(getNumItems(ring))
-    {
-        uint16_t size = getSize(ring);
-        uint16_t pos = ring->rd_pos;
-
-        ring->rd_pos = (ring->rd_pos+1) % size;
-
-        return ((uint16_t*)ring->buffer)[pos];
-    }
-
-    return 0;
-}
-
-uint8_t pushFloatValue(ring_t *ring, float val)
-{
-    uint16_t size = getSize(ring);
-
-    if(getNumItems(ring)<size)
-    {
-        ((float*)ring->buffer)[ring->wr_pos]=val;
-        ring->wr_pos = (ring->wr_pos+1) % size;
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
-float popFloatValue(ring_t *ring)
-{
-    if(getNumItems(ring))
-    {
-        uint16_t size = getSize(ring);
-        uint16_t pos = ring->rd_pos;
-
-        ring->rd_pos = (ring->rd_pos+1) % size;
-
-        return ((float*)ring->buffer)[pos];
-    }
-
-    return 0.0f;
+    uint16_t v = raw_bsb_buff[raw_bsb_buff_tail];
+    raw_bsb_buff_tail = (raw_bsb_buff_tail + 1) % BSB_BUFF_SIZ;
+    return v;
 }
