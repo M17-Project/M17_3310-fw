@@ -148,6 +148,7 @@ volatile uint8_t frame_pend;				//frame generation pending?
 uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
 uint8_t payload[26];						//frame payload
+const uint16_t sms_max_len = sizeof(packet_payload)-1-1-2;
 uint8_t debug_tx;							//debug: transmit dummy signal?
 
 //radio
@@ -195,23 +196,24 @@ void initTextTX(const char *message)
 	memset(payload, 0, 26);
 
 	uint16_t msg_len = strlen(message);
+	if (msg_len > sms_max_len)
+		msg_len = sms_max_len;
 
-	packet_payload[0]=0x05; //packet type: SMS
+	packet_payload[0] = 0x05; //packet type: SMS
 
-	strcpy((char*)&packet_payload[1], message);
+	strncpy((char*)&packet_payload[1], message, msg_len);
+	packet_payload[msg_len+1] = 0; //null terminaton
 
 	uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
 	packet_payload[msg_len+2] = crc>>8;
 	packet_payload[msg_len+3] = crc&0xFF;
 
-	memset(&packet_payload[msg_len+4], 0, sizeof(packet_payload)-(msg_len+4));
-
-	packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
+	packet_bytes = 1+msg_len+1+2; //type, payload, null termination, crc
 
 	radio_state = RF_TX;
 	setRF(radio_state);
-	frame_cnt=0;
-	frame_pend=1;
+	frame_cnt = 0;
+	frame_pend = 1;
 }
 
 //initialize debug M17 transmission
@@ -396,20 +398,18 @@ int main(void)
   //load settings from NVMEM
   loadDeviceSettings(&dev_settings, &def_dev_settings);
 
-  //turn on backlight if required
-  if(dev_settings.backlight_always)
-  {
-	  setBacklight(dev_settings.backlight_level);
-  }
-  else
-  {
-	  //update PSC value
-	  setBacklightTimer(dev_settings.backlight_timer);
-  }
-
   //display splash screen
   curr_disp_state = DISP_SPLASH;
   dispSplash(&disp_dev, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
+
+  //turn on backlight if required
+  setBacklight(dev_settings.backlight_level);
+  if(!dev_settings.backlight_always)
+  {
+	  //update PSC value
+	  setBacklightTimer(dev_settings.backlight_timer);
+	  startBacklightTimer();
+  }
 
   //init SA868S RF module
   radio_state = RF_RX;
@@ -443,7 +443,7 @@ int main(void)
 	  handleKey(&disp_dev, &curr_disp_state, text_entry, code,  &text_mode, &radio_state,
 			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
 
-	  //refresh main screen data TODO: fix the first refresh after boot up
+	  //refresh main screen data
 	  if(t_now-t_last>=1000 && curr_disp_state==DISP_MAIN_SCR)
 	  {
 		  //clear the upper right portion of the screen
@@ -457,7 +457,7 @@ int main(void)
 		  else
 		  {
 			  char u_batt_str[8];
-			  uint16_t u_batt=getBattVoltage();
+			  uint16_t u_batt = getBattVoltage();
 			  if(u_batt>3500)
 				  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
 			  else

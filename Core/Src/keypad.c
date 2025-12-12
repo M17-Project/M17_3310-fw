@@ -177,8 +177,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		if(TIM14->CNT==0)
 		{
 			setBacklight(dev_settings->backlight_level);
-			FIX_TIMER_TRIGGER(&htim14);
-			HAL_TIM_Base_Start_IT(&htim14);
+			startBacklightTimer();
 		}
 		else
 		{
@@ -233,7 +232,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 			}
 
-			//Radio settings
+			//radio settings
 			else if(*disp_state==DISP_RADIO_SETTINGS)
 			{
 				if(item==0)

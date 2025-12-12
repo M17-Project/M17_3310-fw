@@ -2,6 +2,7 @@
 #define INC_PLATFORM_H_
 
 #include <stdint.h>
+#include "macros.h"
 #include "main.h"
 
 extern volatile uint16_t batt_adc;
@@ -14,6 +15,7 @@ extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
 uint16_t getBattVoltage(void);
 void setBacklight(uint8_t level);
 void setBacklightTimer(uint8_t t);
+void startBacklightTimer(void);
 void actVibr(uint8_t period);
 void playBeep(float freq, uint16_t duration);
 

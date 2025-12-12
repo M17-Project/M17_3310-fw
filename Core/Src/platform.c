@@ -11,12 +11,13 @@ uint16_t getBattVoltage(void)
 		v[1] = batt_adc;
 	} while (v[0] != v[1]);
 
-	return *v/4095.0f * 3300.0f * 2.0f;
+	return (float)*v/4095.0f * 3300.0f * 2.0f;
 }
 
 //set backlight - 0..255
 void setBacklight(uint8_t level)
 {
+	//set intensity
 	TIM2->CCR3 = level;
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
 }
@@ -30,6 +31,13 @@ void setBacklightTimer(uint8_t t)
 		TIM14->PSC = (uint32_t)t*2000-1;	//1s corresponds to 2000
 		TIM14->EGR = TIM_EGR_UG;			//update ARR/PSC parameters
 	}
+}
+
+//start the backlight timer
+void startBacklightTimer(void)
+{
+	FIX_TIMER_TRIGGER(&htim14);
+	HAL_TIM_Base_Start_IT(&htim14);
 }
 
 //activate the vibrator

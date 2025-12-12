@@ -209,13 +209,10 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 	setString(disp_dev, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
 
 	//fade in
-	if(dev_settings.backlight_always==1)
+	for(uint16_t i=0; i<dev_settings.backlight_level; i++)
 	{
-		for(uint16_t i=0; i<dev_settings.backlight_level; i++)
-		{
-			setBacklight(i);
-			HAL_Delay(5);
-		}
+		setBacklight(i);
+		HAL_Delay(5);
 	}
 }
 
