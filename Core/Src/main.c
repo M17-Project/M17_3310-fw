@@ -499,7 +499,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 		dbg_print("[Settings] META=");
 		for(uint8_t i=0; i<sizeof(lsf_tx.meta); i++)
 			dbg_print("%02X", lsf_tx.meta[i]);
-		dbg_print(" REF=%s\n", dev_settings.refl_name);
+		dbg_print(" REF=\"%s\"\n", dev_settings.refl_name);
 	}
 
 	//simple echo
@@ -886,12 +886,11 @@ int main(void)
 					  // if CRC matches data
 					  if (LSF_CRC(&lsf_rx)==crc)
 					  {
-						  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n ERR %.1f\n",
-								  call_src, call_dst, type, can,
-								  lsf_rx.meta[0], lsf_rx.meta[1], lsf_rx.meta[2], lsf_rx.meta[3],
-								  lsf_rx.meta[4], lsf_rx.meta[5], lsf_rx.meta[6], lsf_rx.meta[7],
-								  lsf_rx.meta[8], lsf_rx.meta[9], lsf_rx.meta[10], lsf_rx.meta[11],
-								  lsf_rx.meta[12], lsf_rx.meta[13], err);
+						  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: ",
+								  call_src, call_dst, type, can);
+						  for (uint8_t i=0; i<sizeof(lsf_rx.meta); i++)
+							  dbg_print("%02X", lsf_rx.meta[i]);
+						  dbg_print("\n ERR %.1f\n", err);
 					  }
 
 					  lsf_found = 0;
@@ -904,12 +903,10 @@ int main(void)
 					  uint8_t lich_cnt;
 					  decode_str_frame(frame_data, lich, &fn, &lich_cnt, pld_symbs);
 
-					  dbg_print("%04X\n",
-							  fn,
-							  frame_data[0], frame_data[1], frame_data[2], frame_data[3],
-							  frame_data[4], frame_data[5], frame_data[6], frame_data[7],
-							  frame_data[8], frame_data[9], frame_data[10], frame_data[11],
-							  frame_data[12], frame_data[13], frame_data[14], frame_data[15]);
+					  dbg_print("(%04X) ", fn);
+					  for (uint8_t i=0; i<16; i++)
+					  	  dbg_print("%02X", frame_data[i]);
+					  dbg_print("\n");
 
 					  str_found = 0;
 				  }
@@ -920,13 +917,10 @@ int main(void)
 					  uint8_t fn = 0;
 					  decode_pkt_frame(frame_data, &eof, &fn, pld_symbs);
 
-					  dbg_print("(%d) %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
-							  fn,
-							  frame_data[0], frame_data[1], frame_data[2], frame_data[3], frame_data[4],
-							  frame_data[5], frame_data[6], frame_data[7], frame_data[8], frame_data[9],
-							  frame_data[10], frame_data[11], frame_data[12], frame_data[13], frame_data[14],
-							  frame_data[15], frame_data[16], frame_data[17], frame_data[18], frame_data[19],
-							  frame_data[20], frame_data[21], frame_data[22], frame_data[23], frame_data[24]);
+					  dbg_print("(%02X) ", fn);
+					  for (uint8_t i=0; i<25; i++)
+					  	  dbg_print("%02X", frame_data[i]);
+					  dbg_print("\n");
 
 					  pkt_found = 0;
 				  }

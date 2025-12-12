@@ -9,5 +9,5 @@ void dbg_print(const char* fmt, ...)
 	vsnprintf(str, sizeof(str), fmt, ap);
 	va_end(ap);
 
-	CDC_Transmit_FS((uint8_t*)str, strlen(str));
+	while (CDC_Transmit_FS((uint8_t*)str, strlen(str)) != USBD_OK);
 }
