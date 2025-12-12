@@ -139,26 +139,26 @@ dev_settings_t dev_settings;
 edit_set_t edit_set = EDIT_NONE;
 
 //M17
-uint16_t frame_samples[2][SYM_PER_FRA*10]; //sps=10
+uint16_t frame_samples[2][SYM_PER_FRA*10];	//sps=10
 int8_t frame_symbols[SYM_PER_FRA];
 lsf_t lsf_rx, lsf_tx;
-uint8_t frame_cnt; //frame counter, preamble=0
-volatile uint8_t frame_pend; //frame generation pending?
+uint8_t frame_cnt;							//frame counter, preamble=0
+volatile uint8_t frame_pend;				//frame generation pending?
 uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
-uint8_t payload[26]; //frame payload
-uint8_t debug_tx; //debug: transmit dummy signal?
+uint8_t payload[26];						//frame payload
+uint8_t debug_tx;							//debug: transmit dummy signal?
 
 //radio
 radio_state_t radio_state;
 
 //ADC
 volatile uint16_t batt_adc;
-float sw_corr_samples[8*5+5];			// samples for syncword search
-float pld_symbs[SYM_PER_PLD];			// payload symbols
+float sw_corr_samples[8*5+5];				//samples for syncword search
+float pld_symbs[SYM_PER_PLD];				//payload symbols
 
-uint8_t sample_offset;	//location of the squared-L2 minimum
-uint8_t str_syncd;		//syncd with the incoming stream?
+uint8_t sample_offset;						//location of the squared-L2 minimum
+uint8_t lsf_found, str_found, pkt_found;	//syncd with the incoming stream?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -756,46 +756,100 @@ int main(void)
 	  // repeat while there are baseband samples available
 	  while (demodSamplesGetNum() && radio_state==RF_RX)
 	  {
+		  //debug data dump over USB UART
 		  /*uint16_t b[BSB_BUFF_SIZ];
 		  for(uint16_t i=0; i<num_samples; i++)
 			  b[i] = demodSamplePop();
 		  CDC_Transmit_FS((uint8_t*)b, num_samples*sizeof(uint16_t));*/
 
-		  if(!str_syncd)
+		  if(!lsf_found && !str_found && !pkt_found)
 		  {
 			  //consume sample
 			  for(uint16_t i=0; i<arrlen(sw_corr_samples)-1; i++)
 				  sw_corr_samples[i]=sw_corr_samples[i+1];
 			  sw_corr_samples[arrlen(sw_corr_samples)-1] = -fltSample(demodSamplePop());
 
-			  //squared-L2 check against syncword
+			  //squared-L2 check against syncwords
 			  float symbols[8];
 			  for(uint8_t i=0; i<8; i++)
 				  symbols[i]=sw_corr_samples[i*5];
 
 			  //find LSF
-			  float dist_lsf = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
-			  if(dist_lsf < 2.5)
+			  float dist = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
+			  if(dist < 2.5)
 			  {
 				  //find L2 minimum
 				  sample_offset = 0;
-				  for(uint8_t i=1; i<5; i++) // isn't 1 and 2 enough?
+				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
 				  {
 					  for(uint8_t j=0; j<8; j++)
 						  symbols[j]=sw_corr_samples[i+j*5];
 
 					  float d = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
 
-					  if(d < dist_lsf)
+					  if(d < dist)
 					  {
 						  sample_offset = i;
-						  dist_lsf = d;
+						  dist = d;
 					  }
 				  }
 
-				  //dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist_lsf);
+				  //dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
 
-				  str_syncd = 1;
+				  lsf_found = 1;
+				  continue;
+			  }
+
+			  //find stream frame
+			  dist = sq_eucl_norm(symbols, str_sync_symbols, 8);
+			  if(dist < 2.5)
+			  {
+				  //find L2 minimum
+				  sample_offset = 0;
+				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
+				  {
+					  for(uint8_t j=0; j<8; j++)
+						  symbols[j]=sw_corr_samples[i+j*5];
+
+					  float d = sq_eucl_norm(symbols, str_sync_symbols, 8);
+
+					  if(d < dist)
+					  {
+						  sample_offset = i;
+						  dist = d;
+					  }
+				  }
+
+				  //dbg_print("[Debug] STR syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
+
+				  str_found = 1;
+				  continue;
+			  }
+
+			  //find stream frame
+			  dist = sq_eucl_norm(symbols, pkt_sync_symbols, 8);
+			  if(dist < 2.5)
+			  {
+				  //find L2 minimum
+				  sample_offset = 0;
+				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
+				  {
+					  for(uint8_t j=0; j<8; j++)
+						  symbols[j]=sw_corr_samples[i+j*5];
+
+					  float d = sq_eucl_norm(symbols, pkt_sync_symbols, 8);
+
+					  if(d < dist)
+					  {
+						  sample_offset = i;
+						  dist = d;
+					  }
+				  }
+
+				  //dbg_print("[Debug] PKT syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
+
+				  pkt_found = 1;
+				  continue;
 			  }
 		  }
 		  else
@@ -815,40 +869,70 @@ int main(void)
 						  fltSample(demodSamplePop());
 				  }
 
-				  /*uint8_t frame_data[16];
-				  uint8_t lich[5];
-				  uint16_t fn;
-				  uint8_t lich_cnt;
-				  decode_str_frame(frame_data, lich, &fn, &lich_cnt, pld_symbs);
-
-				  dbg_print("%04X\n", fn);*/
-
-				  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
-				  float err = (float)e/0xFFFFU;
-
-				  uint8_t call_dst[10], call_src[10], can;
-				  uint16_t type, crc;
-				  decode_callsign_bytes(call_dst, lsf_rx.dst);
-				  decode_callsign_bytes(call_src, lsf_rx.src);
-				  type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
-				  can=(type>>7)&0xFU;
-				  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
-
-				  // if CRC matches data
-				  if (LSF_CRC(&lsf_rx)==crc)
+				  //decode stuff based on what it is
+				  if (lsf_found)
 				  {
-					  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n ERR %.1f\n",
-							  call_src, call_dst, type, can,
-							  lsf_rx.meta[0], lsf_rx.meta[1], lsf_rx.meta[2], lsf_rx.meta[3],
-							  lsf_rx.meta[4], lsf_rx.meta[5], lsf_rx.meta[6], lsf_rx.meta[7],
-							  lsf_rx.meta[8], lsf_rx.meta[9], lsf_rx.meta[10], lsf_rx.meta[11],
-							  lsf_rx.meta[12], lsf_rx.meta[13], err);
+					  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
+					  float err = (float)e/0xFFFFU;
+
+					  uint8_t call_dst[10], call_src[10], can;
+					  uint16_t type, crc;
+					  decode_callsign_bytes(call_dst, lsf_rx.dst);
+					  decode_callsign_bytes(call_src, lsf_rx.src);
+					  type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
+					  can=(type>>7)&0xFU;
+					  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
+
+					  // if CRC matches data
+					  if (LSF_CRC(&lsf_rx)==crc)
+					  {
+						  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n ERR %.1f\n",
+								  call_src, call_dst, type, can,
+								  lsf_rx.meta[0], lsf_rx.meta[1], lsf_rx.meta[2], lsf_rx.meta[3],
+								  lsf_rx.meta[4], lsf_rx.meta[5], lsf_rx.meta[6], lsf_rx.meta[7],
+								  lsf_rx.meta[8], lsf_rx.meta[9], lsf_rx.meta[10], lsf_rx.meta[11],
+								  lsf_rx.meta[12], lsf_rx.meta[13], err);
+					  }
+
+					  lsf_found = 0;
+				  }
+				  else if (str_found)
+				  {
+					  uint8_t frame_data[16];
+					  uint8_t lich[5];
+					  uint16_t fn;
+					  uint8_t lich_cnt;
+					  decode_str_frame(frame_data, lich, &fn, &lich_cnt, pld_symbs);
+
+					  dbg_print("%04X\n",
+							  fn,
+							  frame_data[0], frame_data[1], frame_data[2], frame_data[3],
+							  frame_data[4], frame_data[5], frame_data[6], frame_data[7],
+							  frame_data[8], frame_data[9], frame_data[10], frame_data[11],
+							  frame_data[12], frame_data[13], frame_data[14], frame_data[15]);
+
+					  str_found = 0;
+				  }
+				  else //pkt_found
+				  {
+					  uint8_t frame_data[25] = {0};
+					  uint8_t eof = 0;
+					  uint8_t fn = 0;
+					  decode_pkt_frame(frame_data, &eof, &fn, pld_symbs);
+
+					  dbg_print("(%d) %02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X%02X\n",
+							  fn,
+							  frame_data[0], frame_data[1], frame_data[2], frame_data[3], frame_data[4],
+							  frame_data[5], frame_data[6], frame_data[7], frame_data[8], frame_data[9],
+							  frame_data[10], frame_data[11], frame_data[12], frame_data[13], frame_data[14],
+							  frame_data[15], frame_data[16], frame_data[17], frame_data[18], frame_data[19],
+							  frame_data[20], frame_data[21], frame_data[22], frame_data[23], frame_data[24]);
+
+					  pkt_found = 0;
 				  }
 
 				  // work done: clear old syncword detection buffer
 				  memset(sw_corr_samples, 0, sizeof(sw_corr_samples));
-
-				  str_syncd=0;
 			  }
 		  }
 	  }
