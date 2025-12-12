@@ -11,7 +11,7 @@ uint16_t demodGetHead(void)
 
 uint8_t demodIsOverrun(void)
 {
-    return ((demodGetHead() + 1) % BSB_BUFF_SIZ) == raw_bsb_buff_tail;
+    return (demodGetHead() + 1) % BSB_BUFF_SIZ == raw_bsb_buff_tail;
 }
 
 uint16_t demodSamplesGetNum(void)
