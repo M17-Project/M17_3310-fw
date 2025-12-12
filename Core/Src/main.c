@@ -33,6 +33,7 @@
 #include "keypad.h"
 #include "ringtones.h"
 #include "rf_module.h"
+#include "nvmem.h"
 #include "debug.h"
 /* USER CODE END Includes */
 
@@ -95,7 +96,7 @@ char code[16];
 char text_entry[256]; //this handles all kinds of text entry
 
 //usb-related
-uint8_t usb_rx[APP_RX_DATA_SIZE];
+uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
 uint32_t usb_len;
 uint8_t usb_drdy;
 
@@ -179,85 +180,11 @@ static void MX_TIM8_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
-void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-//interrupts
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-	//TIM1 - buzzer timer (by default at 1kHz)
-	//TIM2 - LED backlight PWM timer
-	//TIM3 - 5Hz ADC timer (battery voltage readout)
-	//TIM6 - 48kHz base timer (for the DAC)
-
-	//TIM7 - text entry timer
-	if(htim->Instance==TIM7)
-	{
-		HAL_TIM_Base_Stop(&htim7);
-		TIM7->CNT=0;
-	}
-
-	//TIM8 - 24kHz base timer (for the ADC)
-
-	//TIM14 - display backlight timeout timer
-	else if(htim->Instance==TIM14)
-	{
-		HAL_TIM_Base_Stop(&htim14);
-		TIM14->CNT=0;
-		setBacklight(0);
-	}
-}
-
-void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac)
-{
-	if(radio_state==RF_TX)
-	{
-		frame_pend=1;
-	}
-}
-
-void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
-{
-	if(radio_state==RF_TX)
-	{
-		HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[frame_cnt%2][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
-	}
-}
-
-//ADC
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-	;//
-}
-
-/*void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
-{
-	ADC_ChannelConfTypeDef sConfig = {0};
-	sConfig.Channel = channel;
-	sConfig.Rank = 1;
-	sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
-	if(HAL_ADC_ConfigChannel(hadc, &sConfig)!=HAL_OK)
-	{
-		Error_Handler();
-	}
-}*/
-
-uint16_t getBattVoltage(void)
-{
-	uint16_t v[2];
-
-	do
-	{
-		v[0] = batt_adc;
-		v[1] = batt_adc;
-	} while (v[0] != v[1]);
-
-	return *v/4095.0f * 3300.0f * 2.0f;
-}
-
 //messaging - initialize text packet transmission
 //note: some variables inside this function are global
 void initTextTX(const char *message)
@@ -298,115 +225,6 @@ void initDebugTX(void)
 	debug_tx=1;
 }
 
-//memory
-uint8_t eraseSector(void)
-{
-	if(HAL_FLASH_Unlock()==HAL_OK)
-	{
-		FLASH_EraseInitTypeDef erase =
-		{
-			FLASH_TYPEERASE_SECTORS,	//erase sectors
-			FLASH_BANK_1,				//bank 1 (the only available, i guess)
-			FLASH_SECTOR_11,			//start at sector 11 (last)
-			1,							//1 sector to erase
-			FLASH_VOLTAGE_RANGE_3,		//2.7 to 3.6V
-		};
-		uint32_t sector_error=0;
-
-		HAL_StatusTypeDef ret = HAL_FLASHEx_Erase(&erase, &sector_error);
-
-		if(ret==HAL_OK && sector_error==0xFFFFFFFFU) //successful erase
-		{
-			dbg_print("[NVMEM] Sector erased.\n");
-			HAL_FLASH_Lock();
-
-			return 0;
-		}
-
-		dbg_print("[NVMEM] Sector erasure error.\n");
-
-		return 1;
-	}
-
-	dbg_print("[NVMEM] Error unlocking Flash memory.\n");
-
-	return 1;
-}
-
-uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size)
-{
-	if(eraseSector()==0) //erase ok
-	{
-		if(HAL_FLASH_Unlock()==HAL_OK) //unlock ok
-		{
-			for(uint16_t i=0; i<size; i++)
-				HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr+i, *(((uint8_t*)data)+i));
-
-			HAL_FLASH_Lock();
-
-			dbg_print("[NVMEM] Data saved.\n");
-
-			return 0;
-		}
-
-		dbg_print("[NVMEM] Error unlocking Flash memory.\n");
-
-		return 1;
-	}
-
-	dbg_print("[NVMEM] Sector erasure error.\n");
-
-	return 1;
-}
-
-//device settings
-void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings)
-{
-	//if the memory is uninitialized
-	if(*((uint32_t*)MEM_START)==0xFFFFFFFFU)
-	{
-		memcpy((uint8_t*)dev_settings, (uint8_t*)def_dev_settings, sizeof(dev_settings_t));
-		uint8_t ret = saveData(def_dev_settings, MEM_START, sizeof(dev_settings_t));
-
-		if(ret==0)
-			dbg_print("[NVMEM] Default device settings loaded.\n");
-		else
-			dbg_print("[NVMEM] Error saving default device settings.\n");
-	}
-
-	//if settings are available in the memory
-	else
-	{
-		memcpy((uint8_t*)dev_settings, (uint8_t*)MEM_START, sizeof(dev_settings_t));
-
-		dbg_print("[NVMEM] Device settings loaded.\n");
-	}
-
-	//load settings into menus
-	//frequency correction
-	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm", //TODO: there is some problem with negative values here
-			(int8_t)(dev_settings->freq_corr), (uint8_t)fabsf(10*dev_settings->freq_corr) - (int8_t)fabsf((int8_t)(dev_settings->freq_corr)*10.0f)
-	);
-
-	//RF power
-	if(dev_settings->channel.rf_pwr==RF_PWR_HIGH)
-		sprintf(displays[DISP_RADIO_SETTINGS].value[1], "2W");
-	else
-		sprintf(displays[DISP_RADIO_SETTINGS].value[1], "0.5W");
-
-	//SRC callsign
-	strcpy(displays[DISP_M17_SETTINGS].value[0], dev_settings->src_callsign);
-
-	//destination
-	strcpy(displays[DISP_M17_SETTINGS].value[1], dev_settings->channel.dst);
-
-	//CAN
-	sprintf(displays[DISP_M17_SETTINGS].value[2], "%d", dev_settings->channel.can);
-
-	//backlight timeout
-	sprintf(displays[DISP_DISPLAY_SETTINGS].value[1], "%ds", dev_settings->backlight_timer);
-}
-
 //USB control
 void parseUSB(uint8_t *str, uint32_t len)
 {
@@ -415,7 +233,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	if(strncmp((char*)str, "blt=", 4)==0)
 	{
 		dev_settings.backlight_timer=atoi(strstr((char*)str, "=")+1);
-		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
+		saveData(&dev_settings, sizeof(dev_settings_t));
 		setBacklightTimer(dev_settings.backlight_timer);
 	}
 
@@ -474,7 +292,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	else if(len<=(9+9) && strncmp((char*)str, "src_call=", 9)==0)
 	{
 		strcpy(dev_settings.src_callsign, strstr((char*)str, "=")+1);
-		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
+		saveData(&dev_settings, sizeof(dev_settings_t));
 	}
 
 	//set frequency correction
@@ -482,7 +300,7 @@ void parseUSB(uint8_t *str, uint32_t len)
 	else if(strncmp((char*)str, "f_corr=", 7)==0)
 	{
 		dev_settings.freq_corr = atof(strstr((char*)str, "=")+1);
-		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
+		saveData(&dev_settings, sizeof(dev_settings_t));
 	}
 
 	//send text message, 200 bytes max for now
@@ -579,7 +397,7 @@ int main(void)
   loadDeviceSettings(&dev_settings, &def_dev_settings);
 
   //turn on backlight if required
-  if(dev_settings.backlight_always==1)
+  if(dev_settings.backlight_always)
   {
 	  setBacklight(dev_settings.backlight_level);
   }
@@ -728,6 +546,10 @@ int main(void)
 			  showMainScreen(&disp_dev);
 
 			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
+
+			  // restart DMA and the circular buffer
+			  raw_bsb_buff_tail = 0;
+			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
 			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC baseband sample clock
 		  }
 

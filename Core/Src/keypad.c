@@ -322,7 +322,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 
 				*edit_set = EDIT_NONE;
-				saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
+				saveData(dev_settings, sizeof(dev_settings_t));
 
 				*disp_state = DISP_MAIN_SCR;
 				showMainScreen(disp_dev);

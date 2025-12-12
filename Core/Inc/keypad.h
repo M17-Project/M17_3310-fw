@@ -10,12 +10,10 @@
 #include "../t9/t9.h"
 #include "main.h"
 
-#define MEM_START	(0x080E0000U) //last sector, 128kB
-
 extern void initTextTX(const char *message);
 extern void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
 extern void setFreqRF(uint32_t freq, float corr);
-extern uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
+extern uint8_t saveData(const void *data, uint16_t size);
 
 extern TIM_HandleTypeDef htim7;		//TIM7 - text entry timer
 extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer

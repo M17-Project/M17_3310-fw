@@ -1,5 +1,19 @@
 #include "platform.h"
 
+//get battery voltage
+uint16_t getBattVoltage(void)
+{
+	uint16_t v[2];
+
+	do
+	{
+		v[0] = batt_adc;
+		v[1] = batt_adc;
+	} while (v[0] != v[1]);
+
+	return *v/4095.0f * 3300.0f * 2.0f;
+}
+
 //set backlight - 0..255
 void setBacklight(uint8_t level)
 {
@@ -11,7 +25,11 @@ void setBacklight(uint8_t level)
 void setBacklightTimer(uint8_t t)
 {
 	if (t<=32)
-		TIM14->PSC = (uint32_t)t*2000-1; //1s corresponds to 2000
+	{
+		__HAL_TIM_DISABLE(&htim14);
+		TIM14->PSC = (uint32_t)t*2000-1;	//1s corresponds to 2000
+		TIM14->EGR = TIM_EGR_UG;			//update ARR/PSC parameters
+	}
 }
 
 //activate the vibrator
@@ -28,14 +46,26 @@ void playBeep(float freq, uint16_t duration)
 	if (freq < 10.0f)
 		return;
 
-	uint16_t arr = 10, psc = 0;
+	const float tim_clk = 84e6f; //hard-coded
 
-	while (84e6f/freq/arr > 0xFFFF)
-		arr+=10;
-	psc = 84e6f/freq/arr;
+	uint32_t div = (uint32_t)(tim_clk / freq); //total division factor
 
+	if (div < 2)
+		div = 2;  //avoid ARR = 0
+
+	uint32_t psc = (div / 65536); //minimum prescaler needed
+	if (psc > 0xFFFF)
+		psc = 0xFFFF; //clamp
+
+	uint32_t arr = div / (psc + 1);
+
+	if (arr > 0xFFFF)
+		arr = 0xFFFF; //clamp
+
+	__HAL_TIM_DISABLE(&htim1);
 	TIM1->ARR = arr - 1;
-	TIM1->PSC = psc - 1;
+	TIM1->PSC = psc;
+	TIM1->EGR = TIM_EGR_UG; //update ARR/PSC parameters
 
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
 	HAL_Delay(duration);

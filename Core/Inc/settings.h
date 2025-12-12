@@ -1,6 +1,8 @@
 #ifndef INC_SETTINGS_H_
 #define INC_SETTINGS_H_
 
+#include "typedefs.h"
+
 #define CH_MAX_NUM 128
 
 //settings
