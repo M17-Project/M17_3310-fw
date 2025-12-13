@@ -452,13 +452,15 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 					char str[24];
 					sprintf(str, "T %ld.%04ld",
 							dev_settings->channel.tx_frequency/1000000,
-							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
+							(dev_settings->channel.tx_frequency%1000000)/100);
 					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, 1, 1);
 					setString(disp_dev, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 				}
-				else// if(dev_settings->tuning_mode==TUNING_MEM)
+				else //if (dev_settings->tuning_mode==TUNING_MEM)
 				{
-					;
+					dev_settings->ch_num++;
+					dev_settings->ch_num %= codeplug.num_items;
+					memcpy(&dev_settings->channel, &codeplug.channel[dev_settings->ch_num], sizeof(ch_settings_t));
 				}
 			}
 
@@ -509,13 +511,14 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 					char str[24];
 					sprintf(str, "T %ld.%04ld",
 							dev_settings->channel.tx_frequency/1000000,
-							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
+							(dev_settings->channel.tx_frequency%1000000)/100);
 					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, 1, 1);
 					setString(disp_dev, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 				}
-				else// if(dev_settings->tuning_mode==TUNING_MEM)
+				else //if (dev_settings->tuning_mode==TUNING_MEM)
 				{
-					;
+					dev_settings->ch_num = dev_settings->ch_num==0 ? codeplug.num_items-1: dev_settings->ch_num-1;
+					memcpy(&dev_settings->channel, &codeplug.channel[dev_settings->ch_num], sizeof(ch_settings_t));
 				}
 			}
 

@@ -171,19 +171,20 @@ void showMainScreen(disp_dev_t *disp_dev)
 
 	dispClear(disp_dev, 0);
 
-	sprintf(str, "%s", (dev_settings.channel.mode==RF_MODE_4FSK)?"M17":"FM");
+	sprintf(str, "%s %s", (dev_settings.channel.mode==RF_MODE_DIG) ? "Dig" : "Ana",
+			(dev_settings.tuning_mode==TUNING_MEM) ? "Mem" : "VFO");
 	setString(disp_dev, 0, 0, &nokia_small, str, 0, ALIGN_LEFT);
 
 	setString(disp_dev, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
 
 	sprintf(str, "R %ld.%04ld",
 			dev_settings.channel.rx_frequency/1000000,
-			(dev_settings.channel.rx_frequency - (dev_settings.channel.rx_frequency/1000000)*1000000)/100);
+			(dev_settings.channel.rx_frequency%1000000)/100);
 	setString(disp_dev, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
 
 	sprintf(str, "T %ld.%04ld",
 			dev_settings.channel.tx_frequency/1000000,
-			(dev_settings.channel.tx_frequency - (dev_settings.channel.tx_frequency/1000000)*1000000)/100);
+			(dev_settings.channel.tx_frequency%1000000)/100);
 	setString(disp_dev, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
 
 	//is the battery charging? (read /CHG signal)
@@ -195,7 +196,7 @@ void showMainScreen(disp_dev_t *disp_dev)
 	{
 		char u_batt_str[8];
 		uint16_t u_batt = getBattVoltage();
-		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
+		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt%1000)/100);
 		setString(disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT); //display voltage
 	}
 }

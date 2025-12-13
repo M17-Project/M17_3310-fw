@@ -40,8 +40,8 @@ typedef enum ch_bw
 
 typedef enum rf_mode
 {
-	RF_MODE_FM,
-	RF_MODE_4FSK
+	RF_MODE_ANA,
+	RF_MODE_DIG
 } rf_mode_t;
 
 typedef enum rf_power

@@ -126,7 +126,7 @@ void chBwRF(ch_bw_t bw)
 
 void setModeRF(rf_mode_t mode)
 {
-	if(mode==RF_MODE_4FSK)
+	if(mode==RF_MODE_DIG)
 	{
 		setRegRF(0x3A, 0x00C2);
 		setRegRF(0x33, 0x45F5);
@@ -264,7 +264,7 @@ void initRF(dev_settings_t dev_settings)
 	setRegRF(0x40, 0x0031);
 
 	//set mode
-	dbg_print("[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"M17":"FM");
+	dbg_print("[RF module] Setting mode to %s\n", (mode==RF_MODE_DIG)?"digital":"analog");
 	setModeRF(mode);
 
 	//set bandwidth

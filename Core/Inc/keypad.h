@@ -25,6 +25,8 @@ extern uint8_t debug_flag;
 extern uint8_t pos;
 extern const char dict[];
 
+extern codeplug_t codeplug;
+
 //T9 related
 const char *addCode(char *code, char symbol);
 kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep);

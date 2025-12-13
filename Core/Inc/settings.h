@@ -2,6 +2,7 @@
 #define INC_SETTINGS_H_
 
 #include "typedefs.h"
+#include <stdint.h>
 
 #define CH_MAX_NUM 128
 
