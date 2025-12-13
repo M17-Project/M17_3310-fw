@@ -26,14 +26,23 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 
 	kbd_key_t key = KEY_NONE;
 
-	//PD2 down means KEY_OK is pressed
-	if(BTN_OK_GPIO_Port->IDR & BTN_OK_Pin)
+	//PD2 high means KEY_OK is pressed
+	uint8_t ok_now = (BTN_OK_GPIO_Port->IDR & BTN_OK_Pin) ? 1 : 0;
+	static uint8_t ok_prev = 0; //for press/release detection
+
+	//OK button pressed
+	if(ok_now && !ok_prev)
 	{
+		ok_prev = 1;
 		if(radio_state==RF_RX)
 		{
 			next_key_time = now + rep;
 			return KEY_OK;
 		}
+	}
+	else if (!ok_now) //released
+	{
+	    ok_prev = 0;
 	}
 
 	//column 1
@@ -662,7 +671,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 }
 
 //set keyboard insensitivity timer
-void setKeysTimeout(const uint16_t delay)
+void setKeysTimeout(uint16_t delay)
 {
 	TIM7->ARR=delay*10-1;
 }

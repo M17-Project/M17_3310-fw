@@ -18,7 +18,7 @@ uint16_t getBattVoltage(void)
 void setBacklight(uint8_t level)
 {
 	//set intensity
-	TIM2->CCR3 = level;
+	TIM2->CCR3 = (uint16_t)level * (uint16_t)level / 255; //apply gamma correction
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
 }
 

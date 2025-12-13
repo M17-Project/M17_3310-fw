@@ -121,7 +121,7 @@ dev_settings_t def_dev_settings =
 	"N0KIA",
 	{"OpenRTX", "rulez"},
 
-	160,
+	200,
 	5,
 	0,
 	750,
@@ -145,6 +145,7 @@ int8_t frame_symbols[SYM_PER_FRA];
 lsf_t lsf_rx, lsf_tx;
 uint8_t frame_cnt;							//frame counter, preamble=0
 volatile uint8_t frame_pend;				//frame generation pending?
+volatile uint8_t bsb_tx_dma_half;
 uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
 uint8_t payload[26];						//frame payload
@@ -219,11 +220,26 @@ void initTextTX(const char *message)
 //initialize debug M17 transmission
 void initDebugTX(void)
 {
-	/*HAL_ADC_Stop_DMA(&hadc1);
+	// start
+	HAL_ADC_Stop_DMA(&hadc1);
 	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
 
 	radio_state = RF_TX;
-	setRF(radio_state);*/
+	setRF(radio_state);
+
+	// ...then do this
+	HAL_Delay(10000);
+
+	// cleanup
+    radio_state = RF_RX;
+    setRF(radio_state);
+
+    chBwRF(RF_BW_25K);
+
+    HAL_ADC_Stop_DMA(&hadc1);
+    raw_bsb_buff_tail = 0;
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&raw_bsb_buff, arrlen(raw_bsb_buff));
+    HAL_TIM_Base_Start(&htim8);
 }
 
 //USB control
@@ -376,6 +392,7 @@ int main(void)
   #endif
 
   //set baseband DAC to idle
+  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
   HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
   HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out) timer for later DMA transfers
 
@@ -470,95 +487,90 @@ int main(void)
 	  if (frame_pend)
 	  {
 	      const uint8_t warmup = 25;
+	      uint8_t N = (packet_bytes + 24) / 25;
 
 	      if (frame_cnt == 0)
 	      {
+	          // first preamble frame (start DMA)
 	          dispClear(&disp_dev, 0);
 	          setString(&disp_dev, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
 
-	          //TODO: the bandwidth should already be set,
-	          //but we are using a workaround elsewhere
-	          //and need to ensure it is set correctly
 	          chBwRF(dev_settings.channel.ch_bw);
 
 	          uint32_t cnt = 0;
 	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
 	          fltSymbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
 
-	          HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[0][0],
-	                            SYM_PER_FRA * 10, DAC_ALIGN_12B_R);
+	          HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t *)&frame_samples[0][0],
+	                            2*SYM_PER_FRA*10, DAC_ALIGN_12B_R);
 	      }
 	      else if (frame_cnt < warmup)
 	      {
+	          // remaining preamble frames
 	          uint32_t cnt = 0;
 	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
 	      }
 	      else if (frame_cnt == warmup)
 	      {
+	          // LSF frame
 	          gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
-	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
 	      }
-	      else if (frame_cnt == warmup + ((packet_bytes + 24) / 25))
+	      else if (frame_cnt <= warmup + N)
 	      {
-	          uint16_t index = frame_cnt - warmup - 1;
-	          uint16_t bytes_left = packet_bytes - index * 25;
+	          // PKT frames (1..N)
+	          uint8_t index = frame_cnt - warmup - 1;
 
-	          memcpy(payload, &packet_payload[index * 25], 25);
+	          uint16_t off = index * 25;
+	          uint16_t remaining = packet_bytes - off;
 
-	          if (bytes_left > 25)
+	          memcpy(payload, &packet_payload[off], 25);
+	          if (remaining > 25)
 	              payload[25] = index << 2;
 	          else
-	              payload[25] = 0x80 | (bytes_left << 2);
+	              payload[25] = 0x80 | (remaining << 2);
 
 	          gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
-	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
 	      }
-	      else if (payload[25] & 0x80)
+	      else if (frame_cnt == warmup + N + 1)
 	      {
+	          // EOT frame
 	          uint32_t cnt = 0;
 	          gen_eot_i8(frame_symbols, &cnt);
-	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
-	      }
-
-	      if (frame_cnt < warmup + (1 + (packet_bytes + 24) / 25 + 1))
-	      {
-	          frame_cnt++;
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
 	      }
 	      else
 	      {
-	    	  //set the radio to RX mode
+	          // DONE — cleanup
 	          radio_state = RF_RX;
 	          setRF(radio_state);
 
-	          //stop DMA and set idle voltage
 	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
 	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
 
-	          //reset frame counter
 	          frame_cnt = 0;
-
-	          //back to main display
 	          curr_disp_state = DISP_MAIN_SCR;
 	          showMainScreen(&disp_dev);
 
-	          //TODO: this is a workaround
 	          chBwRF(RF_BW_25K);
 
-	          //reset ADC sampler and its ring buffer
 	          HAL_ADC_Stop_DMA(&hadc1);
 	          raw_bsb_buff_tail = 0;
-	          HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
+	          HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&raw_bsb_buff, arrlen(raw_bsb_buff));
 	          HAL_TIM_Base_Start(&htim8);
 	      }
 
+	      frame_cnt++;
 	      frame_pend = 0;
 	  }
 
 	  //debug
 	  if (debug_flag)
 	  {
-		  playMelody(ringtones[0]);
+		  //playMelody(ringtones[0]);
+		  initDebugTX();
 		  debug_flag = 0;
 	  }
 
@@ -1145,7 +1157,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 1600-1;
+  htim2.Init.Prescaler = 35-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 256-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -1290,10 +1302,6 @@ static void MX_TIM7_Init(void)
   htim7.Init.Period = 5000-1;
   htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_OnePulse_Init(&htim7, TIM_OPMODE_SINGLE) != HAL_OK)
   {
     Error_Handler();
   }

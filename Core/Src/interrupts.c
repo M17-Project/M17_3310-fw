@@ -30,7 +30,8 @@ void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 {
 	if(radio_state==RF_TX)
 	{
-		frame_pend=1;
+		bsb_tx_dma_half = 0;
+		frame_pend = 1;
 	}
 }
 
@@ -38,7 +39,8 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
 {
 	if(radio_state==RF_TX)
 	{
-		HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[frame_cnt%2][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
+		bsb_tx_dma_half = 1;
+		frame_pend = 1;
 	}
 }
 

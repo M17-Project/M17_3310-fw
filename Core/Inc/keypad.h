@@ -33,6 +33,6 @@ void pushCharT9(char *text_entry, char *code, kbd_key_t key);
 void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry, char *code,
 		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
 		kbd_key_t key, edit_set_t *edit_set);
-void setKeysTimeout(const uint16_t delay);
+void setKeysTimeout(uint16_t delay);
 
 #endif /* INC_KEYPAD_H_ */

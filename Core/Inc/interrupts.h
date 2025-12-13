@@ -11,6 +11,7 @@ extern TIM_HandleTypeDef htim14;
 
 extern radio_state_t radio_state;
 extern volatile uint8_t frame_pend;
+extern volatile uint8_t bsb_tx_dma_half;
 extern uint16_t frame_samples[2][SYM_PER_FRA*10];
 extern uint8_t frame_cnt;
 
