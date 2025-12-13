@@ -132,7 +132,7 @@ dev_settings_t def_dev_settings =
 	def_channel,
 	0,
 
-	"M17-M17 C"
+	"@ALL"
 };
 
 dev_settings_t dev_settings;
@@ -149,7 +149,7 @@ uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
 uint8_t payload[26];						//frame payload
 const uint16_t sms_max_len = sizeof(packet_payload)-1-1-2;
-uint8_t debug_tx;							//debug: transmit dummy signal?
+uint8_t debug_flag;							//debug flag (for testing)
 
 //radio
 radio_state_t radio_state;
@@ -219,12 +219,11 @@ void initTextTX(const char *message)
 //initialize debug M17 transmission
 void initDebugTX(void)
 {
-	HAL_ADC_Stop_DMA(&hadc1);
+	/*HAL_ADC_Stop_DMA(&hadc1);
 	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
 
 	radio_state = RF_TX;
-	setRF(radio_state);
-	debug_tx=1;
+	setRF(radio_state);*/
 }
 
 //USB control
@@ -377,9 +376,8 @@ int main(void)
   #endif
 
   //set baseband DAC to idle
-  frame_samples[0][0]=DAC_IDLE;
-  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
-  HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out)
+  HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
+  HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out) timer for later DMA transfers
 
   //start ADC sampling
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
@@ -406,7 +404,7 @@ int main(void)
   setBacklight(dev_settings.backlight_level);
   if(!dev_settings.backlight_always)
   {
-	  //update PSC value
+	  //enable backlight timeout
 	  setBacklightTimer(dev_settings.backlight_timer);
 	  startBacklightTimer();
   }
@@ -469,98 +467,100 @@ int main(void)
 	  }
 
 	  //packet transfer triggered - start transmission
-	  if(frame_pend)
+	  if (frame_pend)
 	  {
-		  //this is a workaround for the module's initial frequency wobble after RX->TX transition
-		  const uint8_t warmup = 25; //each frame is 40ms, therefore this is 1s of a solid preamble
+	      const uint8_t warmup = 25;
 
-		  if(frame_cnt==0)
-		  {
-			  dispClear(&disp_dev, 0);
-			  setString(&disp_dev, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+	      if (frame_cnt == 0)
+	      {
+	          dispClear(&disp_dev, 0);
+	          setString(&disp_dev, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
 
-			  chBwRF(dev_settings.channel.ch_bw); //TODO: get rid of this workaround
+	          //TODO: the bandwidth should already be set,
+	          //but we are using a workaround elsewhere
+	          //and need to ensure it is set correctly
+	          chBwRF(dev_settings.channel.ch_bw);
 
-			  //preamble
-			  uint32_t cnt=0;
-			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-			  filter_symbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
+	          uint32_t cnt = 0;
+	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
+	          fltSymbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
 
-			  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[0][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
-		  }
-		  else if(frame_cnt<warmup)
-		  {
-			  //more preamble :D
-			  uint32_t cnt=0;
-			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-		  }
-		  else if(frame_cnt==warmup)
-		  {
-			  //LSF with sample META field
-			  /*encode_callsign_bytes(&lsf.meta[0], (uint8_t*)dev_settings.refl_name);
-			  //encode_callsign_bytes(&lsf.meta[6], (uint8_t*)"");
-			  update_LSF_CRC(&lsf);*/
-			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
-			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-		  }
-		  else
-		  {
-			  //last frame
-			  if((payload[25]&0x80)==0)
-			  {
-				  uint16_t bytes_left=packet_bytes-(frame_cnt-warmup-1)*25;
+	          HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[0][0],
+	                            SYM_PER_FRA * 10, DAC_ALIGN_12B_R);
+	      }
+	      else if (frame_cnt < warmup)
+	      {
+	          uint32_t cnt = 0;
+	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
+	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else if (frame_cnt == warmup)
+	      {
+	          gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
+	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else if (frame_cnt == warmup + ((packet_bytes + 24) / 25))
+	      {
+	          uint16_t index = frame_cnt - warmup - 1;
+	          uint16_t bytes_left = packet_bytes - index * 25;
 
-				  memcpy(payload, &packet_payload[(frame_cnt-warmup-1)*25], 25);
-				  if(bytes_left>25)
-					  payload[25] = (frame_cnt-warmup-1)<<2;
-				  else
-					  payload[25] = 0x80 | ((bytes_left)<<2);
+	          memcpy(payload, &packet_payload[index * 25], 25);
 
-				  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
-				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-			  }
+	          if (bytes_left > 25)
+	              payload[25] = index << 2;
+	          else
+	              payload[25] = 0x80 | (bytes_left << 2);
 
-			  //or EOT
-			  else
-			  {
-				  uint32_t cnt=0;
-				  gen_eot_i8(frame_symbols, &cnt);
-				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-			  }
-		  }
+	          gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
+	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else if (payload[25] & 0x80)
+	      {
+	          uint32_t cnt = 0;
+	          gen_eot_i8(frame_symbols, &cnt);
+	          fltSymbols(&frame_samples[frame_cnt % 2][0], frame_symbols, rrc_taps_10, 0);
+	      }
 
-		  if(frame_cnt<warmup+(1+packet_bytes/25+1))
-		  {
-			  frame_cnt++;
-		  }
-		  else
-		  {
-			  //transmission end, back to RX and main display
-			  radio_state=RF_RX;
-			  setRF(radio_state);
-			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-			  frame_cnt=0;
+	      if (frame_cnt < warmup + (1 + (packet_bytes + 24) / 25 + 1))
+	      {
+	          frame_cnt++;
+	      }
+	      else
+	      {
+	    	  //set the radio to RX mode
+	          radio_state = RF_RX;
+	          setRF(radio_state);
 
-			  curr_disp_state = DISP_MAIN_SCR;
-			  showMainScreen(&disp_dev);
+	          //stop DMA and set idle voltage
+	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
 
-			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
+	          //reset frame counter
+	          frame_cnt = 0;
 
-			  // restart DMA and the circular buffer
-			  raw_bsb_buff_tail = 0;
-			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
-			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC baseband sample clock
-		  }
+	          //back to main display
+	          curr_disp_state = DISP_MAIN_SCR;
+	          showMainScreen(&disp_dev);
 
-		  frame_pend=0;
+	          //TODO: this is a workaround
+	          chBwRF(RF_BW_25K);
+
+	          //reset ADC sampler and its ring buffer
+	          HAL_ADC_Stop_DMA(&hadc1);
+	          raw_bsb_buff_tail = 0;
+	          HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
+	          HAL_TIM_Base_Start(&htim8);
+	      }
+
+	      frame_pend = 0;
 	  }
 
-	  //debug M17 transmission
-	  /*if(debug_tx==1)
+	  //debug
+	  if (debug_flag)
 	  {
-		  ;
-	  }*/
+		  playMelody(ringtones[0]);
+		  debug_flag = 0;
+	  }
 
 	  //received data over USB
 	  if(usb_drdy)

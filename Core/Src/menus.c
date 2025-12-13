@@ -127,7 +127,7 @@ disp_t displays[13] =
 		"Debug menu",
 		1,
 
-		{"Dummy M17 TX"},
+		{"Debug test"},
 		{""},
 		{DISP_NONE},
 

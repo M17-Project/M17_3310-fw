@@ -332,12 +332,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				if(item==0)
 				{
-					debug_tx ^= 1;
-					//initialize dummy transmission
-					if(*radio_state==RF_RX && debug_tx)
-					{
-						;//initDebugTX();
-					}
+					debug_flag = 1;
 				}
 			}
 

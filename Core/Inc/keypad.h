@@ -7,6 +7,7 @@
 #include "typedefs.h"
 #include "keymaps.h"
 #include "display.h"
+#include "platform.h"
 #include "../t9/t9.h"
 #include "main.h"
 
@@ -20,7 +21,7 @@ extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
 
 extern dev_settings_t def_dev_settings;
 extern uint8_t menu_pos, menu_pos_hl;
-extern uint8_t debug_tx;
+extern uint8_t debug_flag;
 extern uint8_t pos;
 extern const char dict[];
 

@@ -54,26 +54,29 @@ void playBeep(float freq, uint16_t duration)
 	if (freq < 10.0f)
 		return;
 
-	const float tim_clk = 84e6f; //hard-coded
+	const float tim_clk = 84e6f;
 
-	uint32_t div = (uint32_t)(tim_clk / freq); //total division factor
-
+	uint32_t div = (uint32_t)(tim_clk / freq);
 	if (div < 2)
-		div = 2;  //avoid ARR = 0
+		div = 2;
 
-	uint32_t psc = (div / 65536); //minimum prescaler needed
+	uint32_t psc = div / 65535;
 	if (psc > 0xFFFF)
-		psc = 0xFFFF; //clamp
+		psc = 0xFFFF;
 
 	uint32_t arr = div / (psc + 1);
 
-	if (arr > 0xFFFF)
-		arr = 0xFFFF; //clamp
+	if (arr < 2)
+		arr = 2;
+	else if (arr > 65535)
+		arr = 65535;
 
+	//update PSC/ARR
 	__HAL_TIM_DISABLE(&htim1);
-	TIM1->ARR = arr - 1;
 	TIM1->PSC = psc;
-	TIM1->EGR = TIM_EGR_UG; //update ARR/PSC parameters
+	TIM1->ARR = arr - 1;
+	TIM1->CCR1 = (arr - 1) / 2;
+	TIM1->EGR = TIM_EGR_UG;
 
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
 	HAL_Delay(duration);

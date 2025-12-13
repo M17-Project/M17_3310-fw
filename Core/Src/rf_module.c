@@ -163,7 +163,7 @@ void initRF(dev_settings_t dev_settings)
 	rf_mode_t mode = ch_settings.mode;
 	rf_power_t pwr = ch_settings.rf_pwr;
 
-	uint8_t data[64]={0};
+	uint8_t data[64] = {0};
 
 	//PTT off
 	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
