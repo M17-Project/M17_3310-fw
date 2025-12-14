@@ -214,6 +214,9 @@ void initTextTX(const char *message)
 
 	radio_state = RF_TX;
 	setRF(radio_state);
+	//TODO: RF PTT line should work
+	//HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 0);
+
 	frame_cnt = 0;
 	frame_pend = 1;
 }
@@ -227,6 +230,8 @@ void initDebugTX(void)
 
 	radio_state = RF_TX;
 	setRF(radio_state);
+	//TODO: RF PTT line should work
+	//HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 0);
 
 	// ...then do this
 	HAL_Delay(10000);
@@ -234,6 +239,8 @@ void initDebugTX(void)
 	// cleanup
     radio_state = RF_RX;
     setRF(radio_state);
+    //TODO: RF PTT line should work
+    //HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
 
     chBwRF(RF_BW_25K);
 
@@ -451,6 +458,8 @@ int main(void)
 	          // DONE — cleanup
 	          radio_state = RF_RX;
 	          setRF(radio_state);
+	          //TODO: RF PTT line should work
+	          //HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
 
 	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
 	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);

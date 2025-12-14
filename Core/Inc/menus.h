@@ -8,40 +8,21 @@
 #define INC_MENUS_H_
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <m17.h>
+#include "typedefs.h"
+#include "settings.h"
+#include "rf_module.h"
+#include "nvmem.h"
+#include "ui_types.h"
 #include "version.h"
 
-#define MAX_NUM_ITEMS		16
-
-typedef enum disp_state
-{
-	DISP_NONE,
-	DISP_SPLASH,
-	DISP_MAIN_SCR,
-	DISP_MAIN_MENU,
-	DISP_SETTINGS,
-	DISP_RADIO_SETTINGS,
-	DISP_DISPLAY_SETTINGS,
-	DISP_KEYBOARD_SETTINGS,
-	DISP_M17_SETTINGS,
-	DISP_INFO,
-	DISP_DEBUG,
-    DISP_TEXT_MSG_ENTRY,
-	DISP_TEXT_VALUE_ENTRY,
-	DISP_NUM_VALUE_ENTRY,
-	DISP_ON_OFF_ENTRY
-} disp_state_t;
-
-typedef struct disp
-{
-	char title[18];							//title
-	uint8_t num_items;						//number of items
-	char item[MAX_NUM_ITEMS][24];			//entries
-	char value[MAX_NUM_ITEMS][24];			//values
-	disp_state_t next_disp[MAX_NUM_ITEMS];	//next display, one per item
-	disp_state_t prev_disp;					//previous display
-} disp_t;
+typedef struct disp_dev_t disp_dev_t;
 
 extern disp_t displays[13];
+
+void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode);
+void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settings,
+				edit_set_t edit_set, radio_state_t *radio_state);
 
 #endif

@@ -1,4 +1,5 @@
 #include "menus.h"
+#include "display.h"
 
 disp_t displays[13] =
 {
@@ -158,3 +159,71 @@ disp_t displays[13] =
 		DISP_MAIN_SCR
 	},
 };
+
+void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode)
+{
+	switch (state)
+	{
+		case DISP_MAIN_SCR:
+			showMainScreen(disp_dev);
+		break;
+
+		case DISP_TEXT_VALUE_ENTRY:
+			showTextValueEntry(disp_dev, text_mode);
+		break;
+
+		default:
+			showMenu(disp_dev, &displays[state], 0, 0);
+		break;
+	}
+}
+
+void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settings,
+		edit_set_t edit_set, radio_state_t *radio_state)
+{
+	if (state != DISP_TEXT_VALUE_ENTRY)
+		return;
+
+	/* commit edited value */
+	if (edit_set == EDIT_RF_PPM)
+	{
+		float val = atof(text_entry);
+		if (fabsf(val) <= 50.0f)
+		{
+			dev_settings->freq_corr = val;
+			if (*radio_state == RF_RX)
+				setFreqRF(dev_settings->channel.rx_frequency,
+						  dev_settings->freq_corr);
+		}
+	}
+	else if (edit_set == EDIT_RF_PWR)
+	{
+		float val = atof(text_entry);
+		if (val > 1.0f)
+		{
+			dev_settings->channel.rf_pwr = RF_PWR_HIGH;
+			HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
+		}
+		else
+		{
+			dev_settings->channel.rf_pwr = RF_PWR_LOW;
+			HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
+		}
+	}
+	else if (edit_set == EDIT_M17_SRC_CALLSIGN)
+	{
+		strcpy(dev_settings->src_callsign, text_entry);
+	}
+	else if (edit_set == EDIT_M17_DST_CALLSIGN)
+	{
+		strcpy(dev_settings->channel.dst, text_entry);
+	}
+	else if (edit_set == EDIT_M17_CAN)
+	{
+		uint8_t val = atoi(text_entry);
+		if (val < 16)
+			dev_settings->channel.can = val;
+	}
+
+	saveData(dev_settings, sizeof(dev_settings_t));
+}

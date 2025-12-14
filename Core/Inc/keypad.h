@@ -3,13 +3,11 @@
 
 #include <stdint.h>
 #include <stdlib.h>
-#include "macros.h"
-#include "typedefs.h"
 #include "keymaps.h"
 #include "display.h"
+#include "menus.h"
 #include "platform.h"
 #include "../t9/t9.h"
-#include "main.h"
 
 extern void initTextTX(const char *message);
 extern void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);

@@ -265,20 +265,20 @@ void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
 //show menu with item highlighting
 //start_item - absolute index of first item to display
 //h_item - item to highlight, relative value: 0..3
-void showMenu(disp_dev_t *disp_dev, disp_t menu, uint8_t start_item, uint8_t h_item)
+void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item)
 {
     dispClear(disp_dev, 0);
 
-    setString(disp_dev, 0, 0, &nokia_small_bold, menu.title, 0, ALIGN_CENTER);
+    setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, 0, ALIGN_CENTER);
 
-    for(uint8_t i=0; i<start_item+menu.num_items && i<4; i++)
+    for(uint8_t i=0; i<start_item+menu->num_items && i<4; i++)
     {
     	//highlight
     	if(i==h_item)
     		drawRect(disp_dev, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
 
-    	setString(disp_dev, 1, (i+1)*9, &nokia_small, menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
-    	if(menu.value[i+start_item][0]!=0)
-    		setString(disp_dev, 0, (i+1)*9, &nokia_small, menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
+    	setString(disp_dev, 1, (i+1)*9, &nokia_small, menu->item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
+    	if(menu->value[i+start_item][0]!=0)
+    		setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
     }
 }

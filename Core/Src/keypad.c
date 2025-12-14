@@ -22,7 +22,7 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 
 	// too early to report another key?
 	if (now < next_key_time)
-	    return KEY_NONE;
+		return KEY_NONE;
 
 	kbd_key_t key = KEY_NONE;
 
@@ -42,7 +42,7 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	}
 	else if (!ok_now) //released
 	{
-	    ok_prev = 0;
+		ok_prev = 0;
 	}
 
 	//column 1
@@ -217,7 +217,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				memset(text_entry, 0, strlen(text_entry));
 
 				*disp_state = next_disp;
-				showMenu(disp_dev, displays[*disp_state], 0, 0);
+				showMenu(disp_dev, &displays[*disp_state], 0, 0);
 			}
 
 			//main menu
@@ -233,11 +233,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				{
 					//load settings from NVMEM
 					loadDeviceSettings(dev_settings, &def_dev_settings);
-					showMenu(disp_dev, displays[*disp_state], 0, 0);
+					showMenu(disp_dev, &displays[*disp_state], 0, 0);
 				}
 				else
 				{
-					showMenu(disp_dev, displays[*disp_state], 0, 0);
+					showMenu(disp_dev, &displays[*disp_state], 0, 0);
 				}
 			}
 
@@ -288,7 +288,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 					{
 						dev_settings->freq_corr = val;
 						//TODO: fix how the frequency correction is applied for TX
-						if(radio_state==RF_RX)
+						if(*radio_state==RF_RX)
 						{
 							setFreqRF(dev_settings->channel.rx_frequency, dev_settings->freq_corr);
 						}
@@ -352,7 +352,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				if(next_disp!=DISP_NONE)
 				{
 					*disp_state = next_disp;
-					showMenu(disp_dev, displays[*disp_state], 0, 0);
+					showMenu(disp_dev, &displays[*disp_state], 0, 0);
 				}
 			}
 
@@ -382,7 +382,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				*disp_state = next_disp;
 				showMainScreen(disp_dev);
-		    }
+			}
 
 			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
@@ -403,7 +403,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				else
 				{
 					*disp_state = next_disp;
-					showMenu(disp_dev, displays[*disp_state], 0, 0);
+					showMenu(disp_dev, &displays[*disp_state], 0, 0);
 				}
 			}
 
@@ -434,7 +434,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			else
 			{
 				*disp_state = displays[*disp_state].prev_disp;
-				showMenu(disp_dev, displays[*disp_state], 0, 0);
+				showMenu(disp_dev, &displays[*disp_state], 0, 0);
 			}
 
 			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
@@ -490,7 +490,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 
 				//no state change
-				showMenu(disp_dev, displays[*disp_state], menu_pos, menu_pos_hl);
+				showMenu(disp_dev, &displays[*disp_state], menu_pos, menu_pos_hl);
 			}
 
 			else
@@ -560,7 +560,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 
 				//no state change
-				showMenu(disp_dev, displays[*disp_state], menu_pos, menu_pos_hl);
+				showMenu(disp_dev, &displays[*disp_state], menu_pos, menu_pos_hl);
 			}
 
 			//else

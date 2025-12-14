@@ -7,8 +7,8 @@
 #include "main.h"
 #include "typedefs.h"
 #include "fonts.h"
-#include "menus.h"
 #include "settings.h"
+#include "ui_types.h"
 
 #define RES_X					84
 #define RES_Y					48
@@ -44,6 +44,6 @@ void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode);
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text);
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text);
 
-void showMenu(disp_dev_t *disp_dev, disp_t menu, uint8_t start_item, uint8_t h_item);
+void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item);
 
 #endif /* INC_DISPLAY_H_ */
