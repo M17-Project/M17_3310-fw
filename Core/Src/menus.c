@@ -11,8 +11,9 @@ disp_t displays[13] =
 		{""},
 		{""},
 		{DISP_NONE},
+		DISP_NONE,
 
-		DISP_NONE
+		{EDIT_NONE}
 	},
 
 	//DISP_SPLASH - 1
@@ -23,8 +24,9 @@ disp_t displays[13] =
 		{""},
 		{""},
 		{DISP_NONE},
+		DISP_SPLASH,
 
-		DISP_SPLASH
+		{EDIT_NONE}
 	},
 
 	//DISP_MAIN_SCR - 2
@@ -35,8 +37,9 @@ disp_t displays[13] =
 		{""},
 		{""},
 		{DISP_MAIN_MENU},
+		DISP_MAIN_SCR,
 
-		DISP_MAIN_SCR
+		{EDIT_NONE}
 	},
 
 	//DISP_MAIN_MENU - 3
@@ -47,8 +50,9 @@ disp_t displays[13] =
 		{"Messaging", "Settings", "Info", "Debug"},
 		{"", "", "", ""},
 		{DISP_TEXT_MSG_ENTRY, DISP_SETTINGS, DISP_INFO, DISP_DEBUG},
+		DISP_MAIN_SCR,
 
-		DISP_MAIN_SCR
+		{EDIT_NONE, EDIT_NONE, EDIT_NONE, EDIT_NONE}
 	},
 
 	//4
@@ -59,8 +63,9 @@ disp_t displays[13] =
 		{"Radio", "Display", "Keyboard", "M17"},
 		{"", "", "", ""},
 		{DISP_RADIO_SETTINGS, DISP_DISPLAY_SETTINGS, DISP_KEYBOARD_SETTINGS, DISP_M17_SETTINGS},
+		DISP_MAIN_MENU,
 
-		DISP_MAIN_MENU
+		{EDIT_NONE, EDIT_NONE, EDIT_NONE, EDIT_NONE}
 	},
 
 	//DISP_RADIO_SETTINGS - 5
@@ -71,8 +76,9 @@ disp_t displays[13] =
 		{"Offset", "RF power"},
 		{"+0.0ppm", "0.5W"},
 		{DISP_TEXT_VALUE_ENTRY, DISP_TEXT_VALUE_ENTRY},
+		DISP_SETTINGS,
 
-		DISP_SETTINGS
+		{EDIT_RF_PPM, EDIT_RF_PWR}
 	},
 
 	//6
@@ -83,8 +89,9 @@ disp_t displays[13] =
 		{"Intensity", "Timeout", "Always on"},
 		{"160", "5s", "No"},
 		{DISP_NONE},
+		DISP_SETTINGS,
 
-		DISP_SETTINGS
+		{EDIT_NONE}
 	},
 
 	//7
@@ -95,8 +102,9 @@ disp_t displays[13] =
 		{"Timeout", "Delay", "Vibration"},
 		{"750", "150", "Off"},
 		{DISP_NONE, DISP_NONE, DISP_NONE},
+		DISP_SETTINGS,
 
-		DISP_SETTINGS
+		{EDIT_NONE, EDIT_NONE, EDIT_NONE}
 	},
 
 	//DISP_M17_SETTINGS - 8
@@ -107,8 +115,9 @@ disp_t displays[13] =
 		{"Callsign", "Dest.", "CAN"},
 		{"N0KIA", "@ALL", "0"},
 		{DISP_TEXT_VALUE_ENTRY, DISP_TEXT_VALUE_ENTRY, DISP_TEXT_VALUE_ENTRY},
+		DISP_SETTINGS,
 
-		DISP_SETTINGS
+		{EDIT_M17_SRC_CALLSIGN, EDIT_M17_DST_CALLSIGN, EDIT_M17_CAN}
 	},
 
 	//9
@@ -119,8 +128,9 @@ disp_t displays[13] =
 		{"FW ver.", "Author", "libm17 ver."},
 		{FW_VER, "SP5WWP", LIBM17_VERSION},
 		{DISP_NONE, DISP_NONE, DISP_NONE},
+		DISP_MAIN_MENU,
 
-		DISP_MAIN_MENU
+		{EDIT_NONE}
 	},
 
 	//DISP_DEBUG - 10
@@ -131,8 +141,9 @@ disp_t displays[13] =
 		{"Debug test"},
 		{""},
 		{DISP_NONE},
+		DISP_MAIN_MENU,
 
-		DISP_MAIN_MENU
+		{EDIT_NONE}
 	},
 
 	//DISP_TEXT_MSG_ENTRY - 11
@@ -143,8 +154,9 @@ disp_t displays[13] =
 		{""},
 		{""},
 		{DISP_MAIN_SCR},
+		DISP_MAIN_MENU,
 
-		DISP_MAIN_MENU
+		{EDIT_NONE}
 	},
 
 	//DISP_TEXT_VALUE_ENTRY - 12
@@ -155,13 +167,41 @@ disp_t displays[13] =
 		{""},
 		{""},
 		{DISP_MAIN_SCR},
+		DISP_MAIN_SCR,
 
-		DISP_MAIN_SCR
+		{EDIT_NONE}
 	},
 };
 
+void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings)
+{
+	switch (state)
+	{
+		case DISP_SETTINGS:
+			;
+		break;
+
+		case DISP_RADIO_SETTINGS:
+			sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm",
+					(int8_t)(dev_settings->freq_corr),
+					(uint8_t)fabsf(dev_settings->freq_corr * 10.0f) % 10);
+			snprintf(displays[state].value[1], 24, "%s",
+					dev_settings->channel.rf_pwr == RF_PWR_HIGH ? "High" : "Low");
+		break;
+
+		case DISP_M17_SETTINGS:
+			snprintf(displays[state].value[0], 24, "%s", dev_settings->src_callsign);
+			snprintf(displays[state].value[1], 24, "%s", dev_settings->channel.dst);
+			snprintf(displays[state].value[2], 24, "%u", dev_settings->channel.can);
+		break;
+
+		default:
+			break;
+	}
+}
+
 void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode,
-		char *text_entry, char *code)
+		char *text_entry, char *code, dev_settings_t *dev_settings)
 {
 	switch (state)
 	{
@@ -184,6 +224,7 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode
 		break;
 
 		default:
+			loadMenuValues(state, dev_settings);
 			showMenu(disp_dev, &displays[state], 0, 0);
 		break;
 	}

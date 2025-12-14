@@ -32,8 +32,11 @@ typedef struct disp
     uint8_t num_items;                          // number of items
     char item[MAX_NUM_ITEMS][24];               // entries
     char value[MAX_NUM_ITEMS][24];              // values
+
     disp_state_t next_disp[MAX_NUM_ITEMS];      // next display per item
     disp_state_t prev_disp;                     // previous display
+
+    edit_set_t edit[MAX_NUM_ITEMS];				// edit: parameter entry
 } disp_t;
 
 

@@ -22,8 +22,9 @@ typedef struct disp_dev_t disp_dev_t;
 extern disp_t displays[13];
 extern uint8_t pos;
 
+void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings);
 void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode,
-		char *text_entry, char *code);
+		char *text_entry, char *code, dev_settings_t *dev_settings);
 void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settings,
 		edit_set_t edit_set, radio_state_t *radio_state);
 

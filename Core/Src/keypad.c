@@ -211,18 +211,9 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			if (next != DISP_NONE)
 				menu_pos = menu_pos_hl = 0;
 
-			// select editor
-			if (*disp_state == DISP_RADIO_SETTINGS)
-			{
-				if (item == 0) *edit_set = EDIT_RF_PPM;
-				else if (item == 1) *edit_set = EDIT_RF_PWR;
-			}
-			else if (*disp_state == DISP_M17_SETTINGS)
-			{
-				if (item == 0) *edit_set = EDIT_M17_SRC_CALLSIGN;
-				else if (item == 1) *edit_set = EDIT_M17_DST_CALLSIGN;
-				else if (item == 2) *edit_set = EDIT_M17_CAN;
-			}
+			// select editor if not editing already (param or message)
+			if (*disp_state != DISP_TEXT_VALUE_ENTRY && *disp_state != DISP_TEXT_MSG_ENTRY)
+				*edit_set = displays[*disp_state].edit[item];
 
 			// messaging: OK sends, but stays in same state
 			if (*disp_state == DISP_TEXT_MSG_ENTRY)
@@ -248,7 +239,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				*disp_state = next;
 				if (next != old)
-					enterState(disp_dev, *disp_state, *text_mode, text_entry, code);
+					enterState(disp_dev, *disp_state, *text_mode, text_entry, code, dev_settings);
 			}
 		break;
 
