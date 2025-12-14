@@ -160,7 +160,8 @@ disp_t displays[13] =
 	},
 };
 
-void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode)
+void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode,
+		char *text_entry, char *code)
 {
 	switch (state)
 	{
@@ -168,7 +169,17 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode
 			showMainScreen(disp_dev);
 		break;
 
+		case DISP_TEXT_MSG_ENTRY:
+			if (text_entry) text_entry[0] = 0;
+			if (code) code[0] = 0;
+			pos = 0;
+			showTextMessageEntry(disp_dev, text_mode);
+		break;
+
 		case DISP_TEXT_VALUE_ENTRY:
+			if (text_entry) text_entry[0] = 0;
+			if (code) code[0] = 0;
+			pos = 0;
 			showTextValueEntry(disp_dev, text_mode);
 		break;
 

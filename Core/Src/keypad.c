@@ -134,6 +134,7 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 		if(new)
 		{
 			text_entry[pos] = key_chars[0];
+			text_entry[pos+1] = 0; //terminate!
 			if(key==KEY_0 && text_mode==TEXT_T9)
 			{
 				pos++;
@@ -143,6 +144,7 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 	else
 	{
 		text_entry[pos] = key_chars[0];
+		text_entry[pos+1] = 0; //terminate!
 		if(key==KEY_0 && text_mode==TEXT_T9)
 		{
 			pos++;
@@ -157,19 +159,21 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 void pushCharT9(char *text_entry, char *code, kbd_key_t key)
 {
 	char c;
-	if(key!=KEY_ASTERISK)
+	if (key != KEY_ASTERISK)
 		c = '2'+key-KEY_2;
 	else
 		c = '*';
 	const char *w = addCode(code, c);
 
-	if(strlen(w)!=0)
+	if (strlen(w) != 0)
 	{
 		strcpy(&text_entry[pos], w);
 	}
-	else if(key!=KEY_ASTERISK)
+	else if (key != KEY_ASTERISK)
 	{
-		text_entry[strlen(text_entry)]='?';
+		uint8_t len = strlen(text_entry);
+		text_entry[len] = '?';
+		text_entry[len+1] = 0;
 	}
 }
 
@@ -196,178 +200,61 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 
 	//find out where to go next
 	uint8_t item = menu_pos + menu_pos_hl;
-	disp_state_t next_disp = displays[*disp_state].next_disp[item];
+	disp_state_t old = *disp_state;
+	disp_state_t next = displays[*disp_state].next_disp[item];
 
 	//do something based on the key pressed and current state
 	switch(key)
 	{
 		case KEY_OK:
-			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
+			// reset menu cursor position when changing menus
+			if (next != DISP_NONE)
+				menu_pos = menu_pos_hl = 0;
 
-			if(next_disp != DISP_NONE)
+			// select editor
+			if (*disp_state == DISP_RADIO_SETTINGS)
 			{
-				menu_pos=menu_pos_hl=0;
+				if (item == 0) *edit_set = EDIT_RF_PPM;
+				else if (item == 1) *edit_set = EDIT_RF_PWR;
+			}
+			else if (*disp_state == DISP_M17_SETTINGS)
+			{
+				if (item == 0) *edit_set = EDIT_M17_SRC_CALLSIGN;
+				else if (item == 1) *edit_set = EDIT_M17_DST_CALLSIGN;
+				else if (item == 2) *edit_set = EDIT_M17_CAN;
 			}
 
-			//main screen
-			if(*disp_state==DISP_MAIN_SCR)
+			// messaging: OK sends, but stays in same state
+			if (*disp_state == DISP_TEXT_MSG_ENTRY)
 			{
-				//clear the text entry buffer before entering the main menu
-				//TODO: this will have to be moved later
-				memset(text_entry, 0, strlen(text_entry));
-
-				*disp_state = next_disp;
-				showMenu(disp_dev, &displays[*disp_state], 0, 0);
-			}
-
-			//main menu
-			else if(*disp_state==DISP_MAIN_MENU)
-			{
-				*disp_state = next_disp;
-
-				if(item==0) //"Messaging"
+				// already inside: OK sends message
+				if (old == DISP_TEXT_MSG_ENTRY)
 				{
-					showTextMessageEntry(disp_dev, *text_mode);
-				}
-				else if(item==1) //"Settings"
-				{
-					//load settings from NVMEM
-					loadDeviceSettings(dev_settings, &def_dev_settings);
-					showMenu(disp_dev, &displays[*disp_state], 0, 0);
-				}
-				else
-				{
-					showMenu(disp_dev, &displays[*disp_state], 0, 0);
+					if (*radio_state == RF_RX)
+						initTextTX(text_entry);
+					break;
 				}
 			}
 
-			//radio settings
-			else if(*disp_state==DISP_RADIO_SETTINGS)
-			{
-				if(item==0)
-					*edit_set=EDIT_RF_PPM;
-				else if(item==1)
-					*edit_set=EDIT_RF_PWR;
+			// leave current state (commit if needed)
+			leaveState(old, text_entry, dev_settings, *edit_set, radio_state);
 
-				//all menu entries are editable
-				*disp_state = next_disp;
-				showTextValueEntry(disp_dev, *text_mode);
-			}
-
-			//M17 settings
-			else if(*disp_state==DISP_M17_SETTINGS)
-			{
-				if(item==0)
-					*edit_set=EDIT_M17_SRC_CALLSIGN;
-				else if(item==1)
-					*edit_set=EDIT_M17_DST_CALLSIGN;
-				else if(item==2)
-					*edit_set=EDIT_M17_CAN;
-
-				//all menu entries are editable
-				*disp_state = next_disp;
-				showTextValueEntry(disp_dev, *text_mode);
-			}
-
-			//text message entry - send message
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				//initialize packet transmission
-				if(*radio_state==RF_RX)
-				{
-					initTextTX(text_entry);
-				}
-			}
-
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				if(*edit_set==EDIT_RF_PPM)
-				{
-					float val = atof(text_entry);
-					if(fabsf(val)<=50.0f)
-					{
-						dev_settings->freq_corr = val;
-						//TODO: fix how the frequency correction is applied for TX
-						if(*radio_state==RF_RX)
-						{
-							setFreqRF(dev_settings->channel.rx_frequency, dev_settings->freq_corr);
-						}
-						/*else //i believe this is an impossible case
-						{
-							setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
-						}*/
-					}
-				}
-				else if(*edit_set==EDIT_RF_PWR)
-				{
-					float val = atof(text_entry);
-					if(val>1.0f)
-					{
-						dev_settings->channel.rf_pwr=RF_PWR_HIGH; //2W output power
-						HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
-					}
-					else
-					{
-						dev_settings->channel.rf_pwr=RF_PWR_LOW; //0.5W output power
-						HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
-					}
-				}
-				else if(*edit_set==EDIT_M17_SRC_CALLSIGN)
-				{
-					memset(dev_settings->src_callsign, 0, sizeof(dev_settings->src_callsign));
-					strcpy(dev_settings->src_callsign, text_entry);
-				}
-				else if(*edit_set==EDIT_M17_DST_CALLSIGN)
-				{
-					memset(dev_settings->channel.dst, 0, sizeof(dev_settings->channel.dst));
-					strcpy(dev_settings->channel.dst, text_entry);
-				}
-				else if(*edit_set==EDIT_M17_CAN)
-				{
-					uint8_t val = atoi(text_entry);
-					if(val<16)
-						dev_settings->channel.can = val;
-				}
-
+			// clear edit selection after commit
+			if (old == DISP_TEXT_VALUE_ENTRY)
 				*edit_set = EDIT_NONE;
-				saveData(dev_settings, sizeof(dev_settings_t));
 
-				*disp_state = DISP_MAIN_SCR;
-				showMainScreen(disp_dev);
-			}
-
-			//debug menu
-			else if(*disp_state==DISP_DEBUG)
+			// perform transition
+			if (next != DISP_NONE)
 			{
-				if(item==0)
-				{
-					debug_flag = 1;
-				}
+				*disp_state = next;
+				if (next != old)
+					enterState(disp_dev, *disp_state, *text_mode, text_entry, code);
 			}
-
-			//settings or info
-			else /*if(*disp_state==DISP_SETTINGS || \
-					*disp_state==DISP_INFO)*/
-			{
-				if(next_disp!=DISP_NONE)
-				{
-					*disp_state = next_disp;
-					showMenu(disp_dev, &displays[*disp_state], 0, 0);
-				}
-			}
-
-			//
-			/*else
-			{
-				;
-			}*/
-
-			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
 		break;
 
 		case KEY_C:
 			menu_pos=menu_pos_hl=0;
-			next_disp = displays[*disp_state].prev_disp;
+			next = displays[*disp_state].prev_disp;
 
 			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
 
@@ -380,7 +267,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//main menu
 			else if(*disp_state==DISP_MAIN_MENU)
 			{
-				*disp_state = next_disp;
+				*disp_state = next;
 				showMainScreen(disp_dev);
 			}
 
@@ -402,7 +289,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 				else
 				{
-					*disp_state = next_disp;
+					*disp_state = next;
 					showMenu(disp_dev, &displays[*disp_state], 0, 0);
 				}
 			}
@@ -425,7 +312,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 				else
 				{
-					*disp_state = next_disp;
+					*disp_state = next;
 					showMainScreen(disp_dev);
 				}
 			}
