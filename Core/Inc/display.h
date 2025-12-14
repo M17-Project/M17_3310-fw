@@ -21,6 +21,7 @@ typedef struct disp_dev_t
 } disp_dev_t;
 
 extern dev_settings_t dev_settings;
+extern char text_entry[];
 
 extern void setBacklight(uint8_t level);
 extern uint16_t getBattVoltage(void);
@@ -45,5 +46,7 @@ void redrawMsgEntry(disp_dev_t *disp_dev, const char *text);
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text);
 
 void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item);
+
+void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state);
 
 #endif /* INC_DISPLAY_H_ */

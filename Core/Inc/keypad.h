@@ -26,11 +26,12 @@ extern const char dict[];
 extern codeplug_t codeplug;
 
 //T9 related
-const char *addCode(char *code, char symbol);
+//static const char *addCode(char symbol);
+//static inline void clearCode(void);
 kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep);
 void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map[][KEYMAP_COLS], kbd_key_t key);
-void pushCharT9(char *text_entry, char *code, kbd_key_t key);
-void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry, char *code,
+void pushCharT9(char *text_entry, kbd_key_t key);
+void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
 		kbd_key_t key, edit_set_t *edit_set);
 void setKeysTimeout(uint16_t delay);

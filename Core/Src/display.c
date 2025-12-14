@@ -282,3 +282,15 @@ void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint
     		setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
     }
 }
+
+void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state)
+{
+	if (disp_state == DISP_TEXT_MSG_ENTRY)
+	{
+		redrawMsgEntry(disp_dev, text_entry);
+	}
+	else if (disp_state == DISP_TEXT_VALUE_ENTRY)
+	{
+		redrawValueEntry(disp_dev, text_entry);
+	}
+}

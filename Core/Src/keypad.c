@@ -1,18 +1,25 @@
 #include "keypad.h"
 
-static uint32_t next_key_time = 0;
+static uint32_t next_key_time;
+static char code[16];
+static uint8_t code_len;
 
 //T9 related
-const char *addCode(char *code, char symbol)
+static const char *addCode(char symbol)
 {
-	code[strlen(code)] = symbol;
+	if (code_len < sizeof(code) - 1)
+	{
+		code[code_len++] = symbol;
+		code[code_len] = 0;
+	}
+
 	return getWord(dict, code);
 }
 
-void clearCode(char *code)
+static inline void clearCode(void)
 {
-	if (code && *code)
-		memset(code, 0, strlen(code));
+	*code = 0;
+	code_len = 0;
 }
 
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
@@ -20,8 +27,8 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 {
 	uint32_t now = HAL_GetTick();
 
-	// too early to report another key?
-	if (now < next_key_time)
+	// too early to report another key? or not in RX mode?
+	if (now < next_key_time || radio_state != RF_RX)
 		return KEY_NONE;
 
 	kbd_key_t key = KEY_NONE;
@@ -34,11 +41,8 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	if(ok_now && !ok_prev)
 	{
 		ok_prev = 1;
-		if(radio_state==RF_RX)
-		{
-			next_key_time = now + rep;
-			return KEY_OK;
-		}
+		next_key_time = now + rep;
+		return KEY_OK;
 	}
 	else if (!ok_now) //released
 	{
@@ -59,7 +63,7 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_ASTERISK;
 	COL_1_GPIO_Port->BSRR = ((uint32_t)COL_1_Pin<<16);
-	if(key!=KEY_NONE && radio_state==RF_RX)
+	if(key!=KEY_NONE)
 	{
 		next_key_time = now + rep;
 		return key;
@@ -79,7 +83,7 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_0;
 	COL_2_GPIO_Port->BSRR = ((uint32_t)COL_2_Pin<<16);
-	if(key!=KEY_NONE && radio_state==RF_RX)
+	if(key!=KEY_NONE)
 	{
 		next_key_time = now + rep;
 		return key;
@@ -99,10 +103,9 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
 		key = KEY_HASH;
 	COL_3_GPIO_Port->BSRR = ((uint32_t)COL_3_Pin<<16);
-	if(key!=KEY_NONE && radio_state==RF_RX)
+	if(key!=KEY_NONE)
 	{
 		next_key_time = now + rep;
-		return key;
 	}
 
 	return key;
@@ -112,7 +115,7 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map[][KEYMAP_COLS], kbd_key_t key)
 {
 	const char *key_chars = key_map[key-KEY_1]; // start indexing at 0
-	uint8_t map_len = strlen(key_chars);
+	uint8_t map_len = key_map_len[key-KEY_1];
 	uint8_t new = 1;
 
 	HAL_TIM_Base_Stop(&htim7);
@@ -156,16 +159,16 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 }
 
 //push character for T9 code
-void pushCharT9(char *text_entry, char *code, kbd_key_t key)
+void pushCharT9(char *text_entry, kbd_key_t key)
 {
 	char c;
 	if (key != KEY_ASTERISK)
 		c = '2'+key-KEY_2;
 	else
 		c = '*';
-	const char *w = addCode(code, c);
+	const char *w = addCode(c);
 
-	if (strlen(w) != 0)
+	if (*w)
 	{
 		strcpy(&text_entry[pos], w);
 	}
@@ -177,7 +180,7 @@ void pushCharT9(char *text_entry, char *code, kbd_key_t key)
 	}
 }
 
-void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry, char *code,
+void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
 		kbd_key_t key, edit_set_t *edit_set)
 {
@@ -272,8 +275,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				{
 					text_entry[len-1] = 0;
 					pos = len - 1;
-					if (*code)
-						memset(code, 0, strlen(code)); // clear T9 code only when required
+					clearCode(); // clear the T9 code if needed
 
 					drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
 					setString(disp_dev, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
@@ -295,8 +297,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				{
 					text_entry[len-1] = 0;
 					pos = len - 1;
-					if (*code)
-						memset(code, 0, strlen(code)); // clear T9 code only when required
+					clearCode(); // clear the T9 code if needed
 
 					drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
 					setString(disp_dev, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
@@ -404,8 +405,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
 				pos=strlen(text_entry);
-				if (*code)
-					memset(code, 0, strlen(code));
+				clearCode(); // clear the T9 code if needed
 				HAL_TIM_Base_Stop(&htim7);
 				TIM7->CNT=0;
 			}
@@ -458,18 +458,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				clearCode(code); // clear the T9 code if needed
+				clearCode(); // clear the T9 code if needed
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				redrawMsgEntry(disp_dev, text_entry);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				redrawValueEntry(disp_dev, text_entry);
-			}
+			redrawText(disp_dev, *disp_state);
 		break;
 
 		//T9 keys
@@ -492,17 +485,10 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				pushCharT9(text_entry, code, key);
+				pushCharT9(text_entry, key);
 			}
 
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				redrawMsgEntry(disp_dev, text_entry);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				redrawValueEntry(disp_dev, text_entry);
-			}
+			redrawText(disp_dev, *disp_state);
 		break;
 
 		case KEY_0:
@@ -516,19 +502,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				clearCode(code); // clear the T9 code if needed
+				clearCode(); // clear the T9 code if needed
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				redrawMsgEntry(disp_dev, text_entry);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				redrawValueEntry(disp_dev, text_entry);
-			}
+			redrawText(disp_dev, *disp_state);
 		break;
 
 		case KEY_HASH:

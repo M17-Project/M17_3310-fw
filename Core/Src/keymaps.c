@@ -1,7 +1,7 @@
-//keymaps
+#include "keymaps.h"
 
 //lowercase
-const char key_map_lc[11][15] =
+const char key_map_lc[KEYMAP_ROWS][KEYMAP_COLS] =
 {
 	".,?!1'\"-+()@/:", //KEY_1
 	"abc2", //KEY_2
@@ -17,7 +17,7 @@ const char key_map_lc[11][15] =
 };
 
 //uppercase
-const char key_map_uc[11][15] =
+const char key_map_uc[KEYMAP_ROWS][KEYMAP_COLS] =
 {
 	".,?!1'\"-+()@/:", //KEY_1
 	"ABC2", //KEY_2
@@ -31,3 +31,5 @@ const char key_map_uc[11][15] =
 	"*=#", //KEY_ASTERISK
 	" 0", //KEY_0
 };
+
+const uint8_t key_map_len[KEYMAP_ROWS] = {14, 4, 4, 4, 4, 4, 5, 4, 5, 3, 2};

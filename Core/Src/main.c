@@ -92,8 +92,7 @@ uint8_t pos;
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
 disp_state_t curr_disp_state = DISP_NONE;
 
-//text/T9 related variables
-char code[16];
+//text related variables
 char text_entry[256]; //this handles all kinds of text entry
 
 //usb-related
@@ -367,7 +366,7 @@ int main(void)
 	  t_now = HAL_GetTick();
 
 	  //handle key presses
-	  handleKey(&disp_dev, &curr_disp_state, text_entry, code,  &text_mode, &radio_state,
+	  handleKey(&disp_dev, &curr_disp_state, text_entry,  &text_mode, &radio_state,
 			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
 
 	  //refresh main screen data
