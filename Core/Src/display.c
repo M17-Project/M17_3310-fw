@@ -1,5 +1,58 @@
 #include "display.h"
 
+static uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max)
+{
+	uint8_t xp = 0;
+	uint8_t n  = 0;
+
+	if (!str || !*str || max == 0)
+		return 0;
+
+	lines[n++] = str;
+
+	while (*str)
+	{
+		// skip spaces
+		while (*str == ' ')
+		{
+			xp += f->symbol[0].width;
+			str++;
+		}
+
+		// stop if we reached the end
+		if (!*str)
+			break;
+
+		// measure next word
+		const char *w = str;
+		uint8_t ww = 0;
+
+		while (*w && *w != ' ')
+		{
+			ww += f->symbol[*w - ' '].width;
+			w++;
+		}
+
+		// wrap before word
+		if (xp && xp + ww > RES_X)
+		{
+			xp = 0;
+
+			if (n < max && *str)
+				lines[n++] = str;
+		}
+
+		// consume word
+		while (*str && *str != ' ')
+		{
+			xp += f->symbol[*str - ' '].width;
+			str++;
+		}
+	}
+
+	return n;
+}
+
 void dispWrite(disp_dev_t *disp_dev, uint8_t dc, uint8_t val)
 {
 	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, dc);
@@ -131,6 +184,7 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, cons
 	dispRefresh(disp_dev);
 }
 
+//display text with word wrapping
 void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color)
 {
 	uint8_t xp = 0;
@@ -166,11 +220,44 @@ void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t 
 		if (*w == ' ')
 		{
 			setChar(disp_dev, xp, y, f, ' ', color);
-			xp += f->symbol[' ' - ' '].width;
+			xp += f->symbol[0].width;
 			wlen++;
 		}
 
 		str += wlen;
+	}
+
+	dispRefresh(disp_dev);
+}
+
+//display text with word wrapping - only the last few lines (display's limitation)
+void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines)
+{
+	const char *lines[16];
+	uint8_t total = wrapLineStarts(f, str, lines, 16);
+
+	if (!total)
+		return;
+
+	uint8_t first = (total > max_lines) ? (total - max_lines) : 0;
+
+	for (uint8_t i = first; i < total; i++)
+	{
+		uint8_t xp = x;
+		const char *s = lines[i];
+		const char *end = (i + 1 < total) ? lines[i + 1] : NULL;
+
+		while (*s == ' ')
+			s++;
+
+		while (*s && s != end)
+		{
+			setChar(disp_dev, xp, y, f, *s, color);
+			xp += f->symbol[*s - ' '].width;
+			s++;
+		}
+
+		y += f->height + 1;
 	}
 
 	dispRefresh(disp_dev);
@@ -286,7 +373,7 @@ void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text)
 {
 	drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-	setStringWordWrap(disp_dev, 0, 10, &nokia_small, text, 0);
+	setStringWordWrapLastLines(disp_dev, 0, 10, &nokia_small, text, COL_BLACK, 3);
 }
 
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text)

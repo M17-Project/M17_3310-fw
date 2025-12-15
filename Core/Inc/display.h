@@ -14,6 +14,9 @@
 #define RES_Y					48
 #define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
 
+#define COL_BLACK				0
+#define COL_WHITE				1
+
 typedef struct disp_dev_t
 {
 	SPI_HandleTypeDef *spi;
@@ -35,6 +38,7 @@ void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set);
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color);
 void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align);
 void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color);
+void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines);
 
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill);
 void showMainScreen(disp_dev_t *disp_dev);
