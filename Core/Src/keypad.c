@@ -43,6 +43,52 @@ static inline uint8_t keyBackspace(char *text_entry)
 	return 1;
 }
 
+static void menuMoveDown(disp_state_t *disp_state)
+{
+	if (menu_pos_hl==3 || menu_pos_hl==displays[*disp_state].num_items-1)
+	{
+		if (menu_pos+3<displays[*disp_state].num_items-1)
+			menu_pos++;
+		else //wrap around
+		{
+			menu_pos=0;
+			menu_pos_hl=0;
+		}
+	}
+	else
+	{
+		if (menu_pos_hl<3 && menu_pos+menu_pos_hl<displays[*disp_state].num_items-1)
+			menu_pos_hl++;
+	}
+}
+
+static void menuMoveUp(disp_state_t *disp_state)
+{
+	if (menu_pos_hl==0)
+	{
+		if (menu_pos>0)
+			menu_pos--;
+		else //wrap around
+		{
+			if (displays[*disp_state].num_items>3)
+			{
+				menu_pos=displays[*disp_state].num_items-1-3;
+				menu_pos_hl=3;
+			}
+			else
+			{
+				menu_pos=0;
+				menu_pos_hl=displays[*disp_state].num_items-1;
+			}
+		}
+	}
+	else
+	{
+		if (menu_pos_hl>0)
+			menu_pos_hl--;
+	}
+}
+
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
 kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 {
@@ -315,38 +361,21 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 			}
 
-			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
+			//text/value entry
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY ||
+					*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
 				; //nothing yet
 			}
 
 			//other menus
-			else if(*disp_state!=DISP_TEXT_VALUE_ENTRY)
+			else
 			{
-				if(menu_pos_hl==3 || menu_pos_hl==displays[*disp_state].num_items-1)
-				{
-					if(menu_pos+3<displays[*disp_state].num_items-1)
-						menu_pos++;
-					else //wrap around
-					{
-						menu_pos=0;
-						menu_pos_hl=0;
-					}
-				}
-				else
-				{
-					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<displays[*disp_state].num_items-1)
-						menu_pos_hl++;
-				}
+				//move down
+				menuMoveDown(disp_state);
 
 				//no state change
 				showMenu(disp_dev, &displays[*disp_state], menu_pos, menu_pos_hl);
-			}
-
-			else
-			{
-				;
 			}
 		break;
 
@@ -373,8 +402,9 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				}
 			}
 
-			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
+			//text/value entry
+			else if(*disp_state==DISP_TEXT_MSG_ENTRY ||
+					*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
 				clearCode(); // clear the T9 code
 				HAL_TIM_Base_Stop(&htim7);
@@ -384,38 +414,12 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//other menus
 			else
 			{
-				if(menu_pos_hl==0)
-				{
-					if(menu_pos>0)
-						menu_pos--;
-					else //wrap around
-					{
-						if(displays[*disp_state].num_items>3)
-						{
-							menu_pos=displays[*disp_state].num_items-1-3;
-							menu_pos_hl=3;
-						}
-						else
-						{
-							menu_pos=0;
-							menu_pos_hl=displays[*disp_state].num_items-1;
-						}
-					}
-				}
-				else
-				{
-					if(menu_pos_hl>0)
-						menu_pos_hl--;
-				}
+				//move up
+				menuMoveUp(disp_state);
 
 				//no state change
 				showMenu(disp_dev, &displays[*disp_state], menu_pos, menu_pos_hl);
 			}
-
-			//else
-			/*{
-				;
-			}*/
 		break;
 
 		case KEY_1:
