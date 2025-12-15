@@ -1,25 +1,34 @@
 #include "keypad.h"
 
 static uint32_t next_key_time;
-static char code[16];
-static uint8_t code_len;
+
+typedef struct
+{
+	char code[16];
+	uint8_t code_len;
+	uint8_t start_pos;
+	uint8_t last_len;
+} t9_t;
+
+static t9_t t9;
 
 //T9 related
 static const char *addCode(char symbol)
 {
-	if (code_len < sizeof(code) - 1)
+	if (t9.code_len < sizeof(t9.code) - 1)
 	{
-		code[code_len++] = symbol;
-		code[code_len] = 0;
+		t9.code[t9.code_len++] = symbol;
+		t9.code[t9.code_len] = 0;
 	}
 
-	return getWord(dict, code);
+	return getWord(dict, t9.code);
 }
 
 static inline void clearCode(void)
 {
-	*code = 0;
-	code_len = 0;
+	t9.code[0] = 0;
+	t9.code_len = 0;
+	t9.last_len = 0;
 }
 
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
@@ -119,10 +128,9 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 	uint8_t new = 1;
 
 	HAL_TIM_Base_Stop(&htim7);
-	pos = strlen(text_entry);
 	char *last = &text_entry[pos>0 ? pos-1 : 0];
 
-	if(TIM7->CNT>0)
+	if(TIM7->CNT)
 	{
 		for(uint8_t i=0; i<map_len; i++)
 		{
@@ -136,22 +144,14 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 
 		if(new)
 		{
-			text_entry[pos] = key_chars[0];
-			text_entry[pos+1] = 0; //terminate!
-			if(key==KEY_0 && text_mode==TEXT_T9)
-			{
-				pos++;
-			}
+			text_entry[pos++] = key_chars[0];
+			text_entry[pos] = 0; //terminate!
 		}
 	}
 	else
 	{
-		text_entry[pos] = key_chars[0];
-		text_entry[pos+1] = 0; //terminate!
-		if(key==KEY_0 && text_mode==TEXT_T9)
-		{
-			pos++;
-		}
+		text_entry[pos++] = key_chars[0];
+		text_entry[pos] = 0; //terminate!
 	}
 
 	TIM7->CNT=0;
@@ -161,23 +161,30 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 //push character for T9 code
 void pushCharT9(char *text_entry, kbd_key_t key)
 {
-	char c;
-	if (key != KEY_ASTERISK)
-		c = '2'+key-KEY_2;
-	else
-		c = '*';
+	char c = (key != KEY_ASTERISK) ? ('2' + key - KEY_2) : '*';
 	const char *w = addCode(c);
+
+	// first T9 digit
+	if (t9.code_len == 1)
+	{
+		t9.start_pos = pos;
+		t9.last_len  = 0;
+	}
 
 	if (*w)
 	{
-		strcpy(&text_entry[pos], w);
+		uint8_t l = strlen(w);
+		memcpy(&text_entry[t9.start_pos], w, l);
+		t9.last_len = l;
 	}
-	else if (key != KEY_ASTERISK)
+	else
 	{
-		uint8_t len = strlen(text_entry);
-		text_entry[len] = '?';
-		text_entry[len+1] = 0;
+		text_entry[t9.start_pos + t9.last_len] = '?';
+		t9.last_len++;
 	}
+
+	text_entry[t9.start_pos + t9.last_len] = 0;
+	pos = t9.start_pos + t9.last_len;
 }
 
 void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
@@ -216,7 +223,10 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 
 			// select editor if not editing already (param or message)
 			if (*disp_state != DISP_TEXT_VALUE_ENTRY && *disp_state != DISP_TEXT_MSG_ENTRY)
+			{
+				clearCode();
 				*edit_set = displays[*disp_state].edit[item];
+			}
 
 			// messaging: OK sends, but stays in same state
 			if (*disp_state == DISP_TEXT_MSG_ENTRY)
@@ -242,7 +252,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				*disp_state = next;
 				if (next != old)
-					enterState(disp_dev, *disp_state, *text_mode, text_entry, code, dev_settings);
+					enterState(disp_dev, *disp_state, *text_mode, text_entry, dev_settings);
 			}
 		break;
 
@@ -268,14 +278,12 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
 			{
-				uint8_t len = strlen(text_entry);
-
 				//backspace
-				if(len)
+				if(pos)
 				{
-					text_entry[len-1] = 0;
-					pos = len - 1;
-					clearCode(); // clear the T9 code if needed
+					text_entry[pos-1] = 0;
+					pos--;
+					clearCode(); // clear the T9 code
 
 					drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
 					setString(disp_dev, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
@@ -290,14 +298,12 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//text value entry
 			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				uint8_t len = strlen(text_entry);
-
 				//backspace
-				if(len)
+				if(pos)
 				{
-					text_entry[len-1] = 0;
-					pos = len - 1;
-					clearCode(); // clear the T9 code if needed
+					text_entry[pos-1] = 0;
+					pos--;
+					clearCode(); // clear the T9 code
 
 					drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
 					setString(disp_dev, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
@@ -404,8 +410,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			//text message entry
 			else if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				pos=strlen(text_entry);
-				clearCode(); // clear the T9 code if needed
+				clearCode(); // clear the T9 code
 				HAL_TIM_Base_Stop(&htim7);
 				TIM7->CNT=0;
 			}
@@ -458,7 +463,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				clearCode(); // clear the T9 code if needed
+				clearCode(); // clear the T9 code
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
@@ -502,7 +507,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
-				clearCode(); // clear the T9 code if needed
+				clearCode(); // clear the T9 code
 				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
 			}
 
@@ -515,7 +520,10 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				if(*text_mode==TEXT_LOWERCASE)
 					*text_mode = TEXT_UPPERCASE;
 				else if(*text_mode==TEXT_UPPERCASE)
+				{
 					*text_mode = TEXT_T9;
+					clearCode();
+				}
 				else
 					*text_mode = TEXT_LOWERCASE;
 

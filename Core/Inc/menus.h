@@ -1,9 +1,3 @@
-//--------------------------------------------------------------------
-// 3310 menus/displays state machine related stuff - menus.h
-//
-// Wojciech Kaczmarski, SP5WWP
-// M17 Foundation, 7 December 2025
-//--------------------------------------------------------------------
 #ifndef INC_MENUS_H_
 #define INC_MENUS_H_
 
@@ -24,7 +18,7 @@ extern uint8_t pos;
 
 void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings);
 void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode,
-		char *text_entry, char *code, dev_settings_t *dev_settings);
+		char *text_entry, dev_settings_t *dev_settings);
 void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settings,
 		edit_set_t edit_set, radio_state_t *radio_state);
 

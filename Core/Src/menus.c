@@ -201,7 +201,7 @@ void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings)
 }
 
 void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode,
-		char *text_entry, char *code, dev_settings_t *dev_settings)
+		char *text_entry, dev_settings_t *dev_settings)
 {
 	switch (state)
 	{
@@ -210,15 +210,13 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode
 		break;
 
 		case DISP_TEXT_MSG_ENTRY:
-			if (text_entry) text_entry[0] = 0;
-			if (code) code[0] = 0;
+			text_entry[0] = 0;
 			pos = 0;
 			showTextMessageEntry(disp_dev, text_mode);
 		break;
 
 		case DISP_TEXT_VALUE_ENTRY:
-			if (text_entry) text_entry[0] = 0;
-			if (code) code[0] = 0;
+			text_entry[0] = 0;
 			pos = 0;
 			showTextValueEntry(disp_dev, text_mode);
 		break;

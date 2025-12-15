@@ -86,14 +86,12 @@ disp_dev_t disp_dev;
 
 //text entry
 text_entry_t text_mode = TEXT_LOWERCASE;
+char text_entry[256]; //this handles all kinds of text entry
 uint8_t pos;
 
 //menus state machine
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
 disp_state_t curr_disp_state = DISP_NONE;
-
-//text related variables
-char text_entry[256]; //this handles all kinds of text entry
 
 //usb-related
 uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
