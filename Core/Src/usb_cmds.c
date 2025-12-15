@@ -1,7 +1,7 @@
 #include "usb_cmds.h"
 
 //USB control
-void parseUSB(uint8_t *str, uint32_t len)
+void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 {
 	//backlight timeout
 	//"blt=VALUE"
@@ -82,8 +82,8 @@ void parseUSB(uint8_t *str, uint32_t len)
 	//"msg=STRING"
 	else if(len<(4+200) && strncmp((char*)str, "msg=", 4)==0)
 	{
-		strcpy(text_entry, strstr((char*)str, "=")+1);
-		initTextTX(text_entry);
+		strcpy(text_entry->buffer, strstr((char*)str, "=")+1);
+		initTextTX(text_entry->buffer);
 	}
 
 	//get LSF META field

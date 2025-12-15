@@ -2,7 +2,7 @@
 #define INC_TYPEDEFS_H_
 
 //text entry types
-typedef enum text_entry
+typedef enum
 {
     TEXT_LOWERCASE,
 	TEXT_UPPERCASE,
@@ -32,33 +32,33 @@ typedef enum key
 } kbd_key_t;
 
 //radio settings
-typedef enum ch_bw
+typedef enum
 {
 	RF_BW_12K5,
 	RF_BW_25K
 } ch_bw_t;
 
-typedef enum rf_mode
+typedef enum
 {
 	RF_MODE_ANA,
 	RF_MODE_DIG
 } rf_mode_t;
 
-typedef enum rf_power
+typedef enum
 {
 	RF_PWR_LOW,
 	RF_PWR_HIGH
 } rf_power_t;
 
 //radio state
-typedef enum radio_state
+typedef enum
 {
 	RF_RX,
 	RF_TX
 } radio_state_t;
 
 //editable settings
-typedef enum edit_set
+typedef enum
 {
 	EDIT_NONE,
 	EDIT_M17_SRC_CALLSIGN,

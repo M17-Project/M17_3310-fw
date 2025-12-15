@@ -35,6 +35,7 @@
 #include "rf_module.h"
 #include "nvmem.h"
 #include "usb_cmds.h"
+#include "text_entry.h"
 #include "debug.h"
 /* USER CODE END Includes */
 
@@ -84,10 +85,8 @@ uint32_t t_now, t_last;
 uint8_t disp_buff[DISP_BUFF_SIZ];
 disp_dev_t disp_dev;
 
-//text entry
-text_entry_t text_mode = TEXT_LOWERCASE;
-char text_entry[256]; //this handles all kinds of text entry
-uint8_t pos;
+//this handles all kinds of text entry
+abc_t text_entry; //entry mode is TEXT_LOWERCASE by default
 
 //menus state machine
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
@@ -364,19 +363,19 @@ int main(void)
 	  t_now = HAL_GetTick();
 
 	  //handle key presses
-	  handleKey(&disp_dev, &curr_disp_state, text_entry,  &text_mode, &radio_state,
+	  handleKey(&disp_dev, &curr_disp_state, &text_entry, &radio_state,
 			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
 
 	  //refresh main screen data
 	  if(t_now-t_last>=1000 && curr_disp_state==DISP_MAIN_SCR)
 	  {
 		  //clear the upper right portion of the screen
-		  drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, 1, 1);
+		  drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, COL_WHITE, 1);
 
 		  //is the battery charging? (read /CHG signal)
 		  if(!(CHG_GPIO_Port->IDR & CHG_Pin))
 		  {
-			  setString(&disp_dev, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT);
+			  setString(&disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT);
 		  }
 		  else
 		  {
@@ -386,7 +385,7 @@ int main(void)
 				  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
 			  else
 				  sprintf(u_batt_str, "Lo");
-			  setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
+			  setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT);
 		  }
 
 		  t_last = HAL_GetTick();
@@ -402,7 +401,7 @@ int main(void)
 	      {
 	          // first preamble frame (start DMA)
 	          dispClear(&disp_dev, 0);
-	          setString(&disp_dev, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+	          setString(&disp_dev, 0, 17, &nokia_big, "Sending...", COL_BLACK, ALIGN_CENTER);
 
 	          chBwRF(dev_settings.channel.ch_bw);
 
@@ -465,7 +464,11 @@ int main(void)
 	          curr_disp_state = DISP_MAIN_SCR;
 	          showMainScreen(&disp_dev);
 
-	          chBwRF(RF_BW_25K);
+	          text_entry.buffer[0] = 0;
+	          text_entry.pos = 0;
+	          // keep the current text entry mode
+
+	          chBwRF(RF_BW_25K); // TODO: this is a workaround
 
 	          HAL_ADC_Stop_DMA(&hadc1);
 	          raw_bsb_buff_tail = 0;
@@ -488,7 +491,7 @@ int main(void)
 	  //received data over USB
 	  if(usb_drdy)
 	  {
-		  parseUSB(usb_rx, usb_len);
+		  parseUSB(&text_entry, usb_rx, usb_len);
 		  usb_drdy=0;
 	  }
 

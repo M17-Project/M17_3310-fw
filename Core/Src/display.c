@@ -96,9 +96,9 @@ void dispRefresh(disp_dev_t *disp_dev)
 		dispWrite(disp_dev, 1, disp_dev->buff[i]);
 }
 
-void dispClear(disp_dev_t *disp_dev, uint8_t fill)
+void dispClear(disp_dev_t *disp_dev, uint8_t color)
 {
-	uint8_t val = fill ? 0xFF : 0;
+	uint8_t val = color ? 0xFF : 0;
 
 	memset(disp_dev->buff, val, DISP_BUFF_SIZ);
 
@@ -108,13 +108,16 @@ void dispClear(disp_dev_t *disp_dev, uint8_t fill)
 		dispWrite(disp_dev, 1, val);
 }
 
+//set pixel
+// 1 - black
+// 0 - white
 void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set)
 {
 	if(x<RES_X && y<RES_Y)
 	{
 		uint16_t loc = x + (y/8)*RES_X;
 
-		if(!set)
+		if(set)
 			disp_dev->buff[loc] |= (1<<(y%8));
 		else
 			disp_dev->buff[loc] &= ~(1<<(y%8));
@@ -305,31 +308,31 @@ void showMainScreen(disp_dev_t *disp_dev)
 
 	sprintf(str, "%s %s", (dev_settings.channel.mode==RF_MODE_DIG) ? "Dig" : "Ana",
 			(dev_settings.tuning_mode==TUNING_MEM) ? "Mem" : "VFO");
-	setString(disp_dev, 0, 0, &nokia_small, str, 0, ALIGN_LEFT);
+	setString(disp_dev, 0, 0, &nokia_small, str, COL_BLACK, ALIGN_LEFT);
 
-	setString(disp_dev, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
+	setString(disp_dev, 0, 12, &nokia_big, dev_settings.channel.ch_name, COL_BLACK, ALIGN_CENTER);
 
 	sprintf(str, "R %ld.%04ld",
 			dev_settings.channel.rx_frequency/1000000,
 			(dev_settings.channel.rx_frequency%1000000)/100);
-	setString(disp_dev, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
+	setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 
 	sprintf(str, "T %ld.%04ld",
 			dev_settings.channel.tx_frequency/1000000,
 			(dev_settings.channel.tx_frequency%1000000)/100);
-	setString(disp_dev, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+	setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 
 	//is the battery charging? (read /CHG signal)
 	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
 	{
-		setString(disp_dev, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display charging status
+		setString(disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT); //display charging status
 	}
 	else
 	{
 		char u_batt_str[8];
 		uint16_t u_batt = getBattVoltage();
 		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt%1000)/100);
-		setString(disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT); //display voltage
+		setString(disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT); //display voltage
 	}
 }
 
@@ -337,9 +340,9 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 {
 	setBacklight(0);
 
-	setString(disp_dev, 0, 9, &nokia_big, line1, 0, ALIGN_CENTER);
-	setString(disp_dev, 0, 22, &nokia_big, line2, 0, ALIGN_CENTER);
-	setString(disp_dev, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
+	setString(disp_dev, 0, 9, &nokia_big, line1, COL_BLACK, ALIGN_CENTER);
+	setString(disp_dev, 0, 22, &nokia_big, line2, COL_BLACK, ALIGN_CENTER);
+	setString(disp_dev, 0, 40, &nokia_small, callsign, COL_BLACK, ALIGN_CENTER);
 
 	//fade in
 	for(uint16_t i=0; i<dev_settings.backlight_level; i++)
@@ -351,47 +354,47 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 
 void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 {
-	dispClear(disp_dev, 0);
+	dispClear(disp_dev, COL_WHITE);
 
 	redrawTextEntryIcon(disp_dev, text_mode);
 
-	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
+	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", COL_BLACK, ALIGN_CENTER);
 }
 
 void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 {
-	dispClear(disp_dev, 0);
+	dispClear(disp_dev, COL_WHITE);
 
 	redrawTextEntryIcon(disp_dev, text_mode);
 
-	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, 0, 0);
+	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, COL_BLACK, 0);
 
-	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Ok", 0, ALIGN_CENTER);
+	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Ok", COL_BLACK, ALIGN_CENTER);
 }
 
 //for text messages
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text)
 {
-	drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+	drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, COL_WHITE, 1);
 	setStringWordWrapLastLines(disp_dev, 0, 10, &nokia_small, text, COL_BLACK, 3);
 }
 
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text)
 {
-	drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-	setString(disp_dev, 3, 13, &nokia_big, text, 0, ALIGN_ARB);
+	drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, COL_WHITE, 1);
+	setString(disp_dev, 3, 13, &nokia_big, text, COL_BLACK, ALIGN_ARB);
 }
 
 void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
 {
-	drawRect(disp_dev, 0, 0, 21, 8, 1, 1);
+	drawRect(disp_dev, 0, 0, 21, 8, COL_WHITE, 1);
 
 	if (mode == TEXT_LOWERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", COL_BLACK, ALIGN_LEFT);
 	else if (mode == TEXT_UPPERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", COL_BLACK, ALIGN_LEFT);
 	else
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", 0, ALIGN_LEFT);
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", COL_BLACK, ALIGN_LEFT);
 }
 
 //show menu with item highlighting
@@ -401,28 +404,28 @@ void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint
 {
 	dispClear(disp_dev, 0);
 
-	setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, 0, ALIGN_CENTER);
+	setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, COL_BLACK, ALIGN_CENTER);
 
 	for(uint8_t i=0; i<start_item+menu->num_items && i<4; i++)
 	{
 		//highlight
 		if(i==h_item)
-			drawRect(disp_dev, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
+			drawRect(disp_dev, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, COL_BLACK, 1);
 
-		setString(disp_dev, 1, (i+1)*9, &nokia_small, menu->item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
+		setString(disp_dev, 1, (i+1)*9, &nokia_small, menu->item[i+start_item], (i==h_item)?COL_WHITE:COL_BLACK, ALIGN_ARB);
 		if(menu->value[i+start_item][0]!=0)
-			setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
+			setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?COL_WHITE:COL_BLACK, ALIGN_RIGHT);
 	}
 }
 
-void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state)
+void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state, char *text)
 {
 	if (disp_state == DISP_TEXT_MSG_ENTRY)
 	{
-		redrawMsgEntry(disp_dev, text_entry);
+		redrawMsgEntry(disp_dev, text);
 	}
 	else if (disp_state == DISP_TEXT_VALUE_ENTRY)
 	{
-		redrawValueEntry(disp_dev, text_entry);
+		redrawValueEntry(disp_dev, text);
 	}
 }

@@ -1,5 +1,6 @@
 #include "menus.h"
 #include "display.h"
+#include "keypad.h"
 
 disp_t displays[13] =
 {
@@ -200,8 +201,7 @@ void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings)
 	}
 }
 
-void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode,
-		char *text_entry, dev_settings_t *dev_settings)
+void enterState(disp_dev_t *disp_dev, disp_state_t state, abc_t *text_entry, dev_settings_t *dev_settings)
 {
 	switch (state)
 	{
@@ -210,15 +210,17 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode
 		break;
 
 		case DISP_TEXT_MSG_ENTRY:
-			text_entry[0] = 0;
-			pos = 0;
-			showTextMessageEntry(disp_dev, text_mode);
+			text_entry->buffer[0] = 0;
+			text_entry->pos = 0;
+			// we keep the last text entry mode intentionally
+			showTextMessageEntry(disp_dev, text_entry->mode);
 		break;
 
 		case DISP_TEXT_VALUE_ENTRY:
-			text_entry[0] = 0;
-			pos = 0;
-			showTextValueEntry(disp_dev, text_mode);
+			text_entry->buffer[0] = 0;
+			text_entry->pos = 0;
+			// we keep the last text entry mode intentionally
+			showTextValueEntry(disp_dev, text_entry->mode);
 		break;
 
 		default:
@@ -231,10 +233,12 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, text_entry_t text_mode
 void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settings,
 		edit_set_t edit_set, radio_state_t *radio_state)
 {
+	resetTextEntry();
+
 	if (state != DISP_TEXT_VALUE_ENTRY)
 		return;
 
-	/* commit edited value */
+	// commit edited value
 	if (edit_set == EDIT_RF_PPM)
 	{
 		float val = atof(text_entry);
@@ -274,6 +278,9 @@ void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settin
 		if (val < 16)
 			dev_settings->channel.can = val;
 	}
+
+	dispClear(&disp_dev, COL_WHITE);
+	setString(&disp_dev, 0, 17, &nokia_big, "Saving...", COL_BLACK, ALIGN_CENTER);
 
 	saveData(dev_settings, sizeof(dev_settings_t));
 }

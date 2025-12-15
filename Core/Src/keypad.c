@@ -32,12 +32,12 @@ static inline void clearCode(void)
 }
 
 // backspace key handler
-static inline uint8_t keyBackspace(char *text_entry)
+static inline uint8_t keyBackspace(abc_t *text_entry)
 {
-	if (!pos)
+	if (!(text_entry->pos))
 		return 0;
 
-	text_entry[--pos] = 0;
+	text_entry->buffer[--(text_entry->pos)] = 0;
 	clearCode();
 
 	return 1;
@@ -87,6 +87,13 @@ static void menuMoveUp(disp_state_t *disp_state)
 		if (menu_pos_hl>0)
 			menu_pos_hl--;
 	}
+}
+
+void resetTextEntry(void)
+{
+	clearCode();
+	HAL_TIM_Base_Stop(&htim7);
+	TIM7->CNT = 0;
 }
 
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
@@ -179,14 +186,14 @@ kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 }
 
 //push a character into the text message buffer
-void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map[][KEYMAP_COLS], kbd_key_t key)
+void pushCharBuffer(abc_t *text_entry, const char key_map[][KEYMAP_COLS], kbd_key_t key)
 {
 	const char *key_chars = key_map[key-KEY_1]; // start indexing at 0
 	uint8_t map_len = key_map_len[key-KEY_1];
 	uint8_t new = 1;
 
 	HAL_TIM_Base_Stop(&htim7);
-	char *last = &text_entry[pos>0 ? pos-1 : 0];
+	char *last = &text_entry->buffer[text_entry->pos>0 ? text_entry->pos-1 : 0];
 
 	if(TIM7->CNT)
 	{
@@ -202,14 +209,22 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 
 		if(new)
 		{
-			text_entry[pos++] = key_chars[0];
-			text_entry[pos] = 0; //terminate!
+			// check if the buffer can hold it
+			if (text_entry->pos < sizeof(text_entry->buffer) - 1)
+			{
+				text_entry->buffer[(text_entry->pos)++] = key_chars[0];
+				text_entry->buffer[text_entry->pos] = 0; //terminate!
+			}
 		}
 	}
 	else
 	{
-		text_entry[pos++] = key_chars[0];
-		text_entry[pos] = 0; //terminate!
+		// check if the buffer can hold it
+		if (text_entry->pos < sizeof(text_entry->buffer) - 1)
+		{
+			text_entry->buffer[(text_entry->pos)++] = key_chars[0];
+			text_entry->buffer[text_entry->pos] = 0; //terminate!
+		}
 	}
 
 	TIM7->CNT=0;
@@ -217,7 +232,7 @@ void pushCharBuffer(char *text_entry, text_entry_t text_mode, const char key_map
 }
 
 //push character for T9 code
-void pushCharT9(char *text_entry, kbd_key_t key)
+void pushCharT9(abc_t *text_entry, kbd_key_t key)
 {
 	char c = (key != KEY_ASTERISK) ? ('2' + key - KEY_2) : '*';
 	const char *w = addCode(c);
@@ -225,29 +240,29 @@ void pushCharT9(char *text_entry, kbd_key_t key)
 	// first T9 digit
 	if (t9.code_len == 1)
 	{
-		t9.start_pos = pos;
+		t9.start_pos = text_entry->pos;
 		t9.last_len  = 0;
 	}
 
 	if (*w)
 	{
 		uint8_t l = strlen(w);
-		memcpy(&text_entry[t9.start_pos], w, l);
+		memset(&text_entry->buffer[t9.start_pos], 0, t9.last_len);
+		memcpy(&text_entry->buffer[t9.start_pos], w, l);
 		t9.last_len = l;
 	}
 	else
 	{
-		text_entry[t9.start_pos + t9.last_len] = '?';
+		text_entry->buffer[t9.start_pos + t9.last_len] = '?';
 		t9.last_len++;
 	}
 
-	text_entry[t9.start_pos + t9.last_len] = 0;
-	pos = t9.start_pos + t9.last_len;
+	text_entry->buffer[t9.start_pos + t9.last_len] = 0;
+	text_entry->pos = t9.start_pos + t9.last_len;
 }
 
-void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
-		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
-		kbd_key_t key, edit_set_t *edit_set)
+void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry,
+		radio_state_t *radio_state, dev_settings_t *dev_settings, kbd_key_t key, edit_set_t *edit_set)
 {
 	if (key==KEY_NONE)
 		return;
@@ -293,13 +308,13 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 				if (old == DISP_TEXT_MSG_ENTRY)
 				{
 					if (*radio_state == RF_RX)
-						initTextTX(text_entry);
+						initTextTX(text_entry->buffer);
 					break;
 				}
 			}
 
 			// leave current state (commit if needed)
-			leaveState(old, text_entry, dev_settings, *edit_set, radio_state);
+			leaveState(old, text_entry->buffer, dev_settings, *edit_set, radio_state);
 
 			// clear edit selection after commit
 			if (old == DISP_TEXT_VALUE_ENTRY)
@@ -310,7 +325,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				*disp_state = next;
 				if (next != old)
-					enterState(disp_dev, *disp_state, *text_mode, text_entry, dev_settings);
+					enterState(disp_dev, *disp_state, text_entry, dev_settings);
 			}
 		break;
 
@@ -324,17 +339,17 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 			{
 				if (keyBackspace(text_entry))
 				{
-					redrawText(disp_dev, *disp_state);
+					redrawText(disp_dev, *disp_state, text_entry->buffer);
 					break;
 				}
 			}
 
 			// cancel/back
-			leaveState(*disp_state, text_entry, dev_settings, *edit_set, radio_state);
+			leaveState(*disp_state, text_entry->buffer, dev_settings, *edit_set, radio_state);
 
 			*disp_state = prev;
 
-			enterState(disp_dev, *disp_state, *text_mode, text_entry, dev_settings);
+			enterState(disp_dev, *disp_state, text_entry, dev_settings);
 		break;
 
 		case KEY_LEFT:
@@ -351,7 +366,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 							dev_settings->channel.tx_frequency/1000000,
 							(dev_settings->channel.tx_frequency%1000000)/100);
 					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, 1, 1);
-					setString(disp_dev, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+					setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 				}
 				else //if (dev_settings->tuning_mode==TUNING_MEM)
 				{
@@ -393,7 +408,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 							dev_settings->channel.tx_frequency/1000000,
 							(dev_settings->channel.tx_frequency%1000000)/100);
 					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, 1, 1);
-					setString(disp_dev, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
+					setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 				}
 				else //if (dev_settings->tuning_mode==TUNING_MEM)
 				{
@@ -423,21 +438,21 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		break;
 
 		case KEY_1:
-			if(*text_mode==TEXT_LOWERCASE)
+			if(text_entry->mode==TEXT_LOWERCASE)
 			{
-				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
+				pushCharBuffer(text_entry, key_map_lc, key);
 			}
-			else if (*text_mode==TEXT_UPPERCASE)
+			else if (text_entry->mode==TEXT_UPPERCASE)
 			{
-				pushCharBuffer(text_entry, *text_mode, key_map_uc, key);
+				pushCharBuffer(text_entry, key_map_uc, key);
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
 				clearCode(); // clear the T9 code
-				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
+				pushCharBuffer(text_entry, key_map_lc, key);
 			}
 
-			redrawText(disp_dev, *disp_state);
+			redrawText(disp_dev, *disp_state, text_entry->buffer);
 		break;
 
 		//T9 keys
@@ -450,54 +465,54 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		case KEY_8:
 		case KEY_9:
 		case KEY_ASTERISK:
-			if(*text_mode==TEXT_LOWERCASE)
+			if(text_entry->mode==TEXT_LOWERCASE)
 			{
-				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
+				pushCharBuffer(text_entry, key_map_lc, key);
 			}
-			else if (*text_mode==TEXT_UPPERCASE)
+			else if (text_entry->mode==TEXT_UPPERCASE)
 			{
-				pushCharBuffer(text_entry, *text_mode, key_map_uc, key);
+				pushCharBuffer(text_entry, key_map_uc, key);
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
 				pushCharT9(text_entry, key);
 			}
 
-			redrawText(disp_dev, *disp_state);
+			redrawText(disp_dev, *disp_state, text_entry->buffer);
 		break;
 
 		case KEY_0:
-			if(*text_mode==TEXT_LOWERCASE)
+			if(text_entry->mode==TEXT_LOWERCASE)
 			{
-				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
+				pushCharBuffer(text_entry, key_map_lc, key);
 			}
-			else if (*text_mode==TEXT_UPPERCASE)
+			else if (text_entry->mode==TEXT_UPPERCASE)
 			{
-				pushCharBuffer(text_entry, *text_mode, key_map_uc, key);
+				pushCharBuffer(text_entry, key_map_uc, key);
 			}
 			else //if (*text_mode==TEXT_T9)
 			{
 				clearCode(); // clear the T9 code
-				pushCharBuffer(text_entry, *text_mode, key_map_lc, key);
+				pushCharBuffer(text_entry, key_map_lc, key);
 			}
 
-			redrawText(disp_dev, *disp_state);
+			redrawText(disp_dev, *disp_state, text_entry->buffer);
 		break;
 
 		case KEY_HASH:
 			if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
 			{
-				if(*text_mode==TEXT_LOWERCASE)
-					*text_mode = TEXT_UPPERCASE;
-				else if(*text_mode==TEXT_UPPERCASE)
+				if(text_entry->mode==TEXT_LOWERCASE)
+					text_entry->mode = TEXT_UPPERCASE;
+				else if(text_entry->mode==TEXT_UPPERCASE)
 				{
-					*text_mode = TEXT_T9;
+					text_entry->mode = TEXT_T9;
 					clearCode();
 				}
 				else
-					*text_mode = TEXT_LOWERCASE;
+					text_entry->mode = TEXT_LOWERCASE;
 
-				redrawTextEntryIcon(disp_dev, *text_mode);
+				redrawTextEntryIcon(disp_dev, text_entry->mode);
 			}
 		break;
 
