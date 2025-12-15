@@ -1,4 +1,5 @@
 #include "platform.h"
+#include <math.h>
 
 //get battery voltage
 uint16_t getBattVoltage(void)

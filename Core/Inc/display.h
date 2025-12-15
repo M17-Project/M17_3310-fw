@@ -2,12 +2,8 @@
 #define INC_DISPLAY_H_
 
 #include <stdint.h>
-#include <string.h>
-#include <stdio.h>
-#include "main.h"
-#include "typedefs.h"
 #include "fonts.h"
-#include "settings.h"
+#include "text_entry.h"
 #include "ui_types.h"
 
 #define RES_X					84
@@ -17,6 +13,7 @@
 #define COL_BLACK				1
 #define COL_WHITE				0
 
+typedef struct __SPI_HandleTypeDef SPI_HandleTypeDef;
 typedef struct disp_dev_t
 {
 	SPI_HandleTypeDef *spi;

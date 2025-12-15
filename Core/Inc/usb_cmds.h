@@ -7,8 +7,7 @@
 #include "rf_module.h"
 #include "text_entry.h"
 #include <stdint.h>
-#include <string.h>
-#include <stdlib.h>
+#include <m17.h>
 
 extern dev_settings_t dev_settings;
 extern dev_settings_t def_dev_settings;

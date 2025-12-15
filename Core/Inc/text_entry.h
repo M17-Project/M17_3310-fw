@@ -2,6 +2,7 @@
 #define INC_TEXT_ENTRY_H_
 
 #include <stdint.h>
+#include "typedefs.h"
 
 typedef struct
 {

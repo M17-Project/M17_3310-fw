@@ -4,7 +4,6 @@
 #include <stdint.h>
 #include "macros.h"
 #include "main.h"
-#include <math.h>
 
 extern volatile uint16_t batt_adc;
 

@@ -10,7 +10,7 @@ typedef enum
 } text_entry_t;
 
 //keys
-typedef enum key
+typedef enum
 {
 	KEY_NONE,
 	KEY_OK,

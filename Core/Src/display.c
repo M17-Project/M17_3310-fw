@@ -1,4 +1,7 @@
 #include "display.h"
+#include <string.h>
+#include <stdio.h>
+#include "main.h"
 
 static uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max)
 {

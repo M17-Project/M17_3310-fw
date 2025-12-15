@@ -1,4 +1,13 @@
 #include "keypad.h"
+#include "display.h"
+#include "menus.h"
+#include "platform.h"
+#include "keymaps.h"
+#include "settings.h"
+#include "../t9/t9.h"
+
+extern TIM_HandleTypeDef htim7;		//TIM7 - text entry timer
+extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
 
 static uint32_t next_key_time;
 

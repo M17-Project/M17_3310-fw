@@ -2,21 +2,17 @@
 #define INC_KEYPAD_H_
 
 #include <stdint.h>
-#include <stdlib.h>
-#include "keymaps.h"
-#include "display.h"
-#include "menus.h"
-#include "platform.h"
+#include "typedefs.h"
+#include "ui_types.h"
 #include "text_entry.h"
-#include "../t9/t9.h"
+#include "keymaps.h"
+
+typedef struct disp_dev_t disp_dev_t;
 
 extern void initTextTX(const char *message);
 extern void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
 extern void setFreqRF(uint32_t freq, float corr);
 extern uint8_t saveData(const void *data, uint16_t size);
-
-extern TIM_HandleTypeDef htim7;		//TIM7 - text entry timer
-extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
 
 extern dev_settings_t def_dev_settings;
 extern uint8_t menu_pos, menu_pos_hl;

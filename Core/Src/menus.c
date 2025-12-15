@@ -1,6 +1,7 @@
 #include "menus.h"
 #include "display.h"
 #include "keypad.h"
+#include <m17.h>
 
 disp_t displays[13] =
 {

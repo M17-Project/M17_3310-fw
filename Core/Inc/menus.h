@@ -2,8 +2,6 @@
 #define INC_MENUS_H_
 
 #include <stdint.h>
-#include <stdlib.h>
-#include <m17.h>
 #include "typedefs.h"
 #include "settings.h"
 #include "rf_module.h"
