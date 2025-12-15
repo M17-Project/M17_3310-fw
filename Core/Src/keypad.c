@@ -31,6 +31,18 @@ static inline void clearCode(void)
 	t9.last_len = 0;
 }
 
+// backspace key handler
+static inline uint8_t keyBackspace(char *text_entry)
+{
+	if (!pos)
+		return 0;
+
+	text_entry[--pos] = 0;
+	clearCode();
+
+	return 1;
+}
+
 //scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
 kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
 {
@@ -257,72 +269,26 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, char *text_entry,
 		break;
 
 		case KEY_C:
-			menu_pos=menu_pos_hl=0;
-			next = displays[*disp_state].prev_disp;
+			menu_pos = menu_pos_hl = 0;
+			disp_state_t prev = displays[*disp_state].prev_disp;
 
-			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
-
-			//main screen
-			if(*disp_state==DISP_MAIN_SCR)
+			// text editors: try backspace first
+			if (*disp_state == DISP_TEXT_MSG_ENTRY ||
+				*disp_state == DISP_TEXT_VALUE_ENTRY)
 			{
-				; //nothing
-			}
-
-			//main menu
-			else if(*disp_state==DISP_MAIN_MENU)
-			{
-				*disp_state = next;
-				showMainScreen(disp_dev);
-			}
-
-			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				//backspace
-				if(pos)
+				if (keyBackspace(text_entry))
 				{
-					text_entry[pos-1] = 0;
-					pos--;
-					clearCode(); // clear the T9 code
-
-					drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-					setString(disp_dev, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-				}
-				else
-				{
-					*disp_state = next;
-					showMenu(disp_dev, &displays[*disp_state], 0, 0);
+					redrawText(disp_dev, *disp_state);
+					break;
 				}
 			}
 
-			//text value entry
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				//backspace
-				if(pos)
-				{
-					text_entry[pos-1] = 0;
-					pos--;
-					clearCode(); // clear the T9 code
+			// cancel/back
+			leaveState(*disp_state, text_entry, dev_settings, *edit_set, radio_state);
 
-					drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-					setString(disp_dev, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-				}
-				else
-				{
-					*disp_state = next;
-					showMainScreen(disp_dev);
-				}
-			}
+			*disp_state = prev;
 
-			//anything else
-			else
-			{
-				*disp_state = displays[*disp_state].prev_disp;
-				showMenu(disp_dev, &displays[*disp_state], 0, 0);
-			}
-
-			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
+			enterState(disp_dev, *disp_state, *text_mode, text_entry, dev_settings);
 		break;
 
 		case KEY_LEFT:
