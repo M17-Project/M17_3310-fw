@@ -663,12 +663,15 @@ int main(void)
 					  uint8_t frame_data[25] = {0};
 					  uint8_t eof = 0;
 					  uint8_t fn = 0;
+
 					  decode_pkt_frame(frame_data, &eof, &fn, pld_symbs);
 
 					  dbg_print("(%02X) ", fn);
 					  for (uint8_t i=0; i<25; i++)
 					  	  dbg_print("%02X", frame_data[i]);
 					  dbg_print("\n");
+
+					  ; //TODO: add packet collector here
 
 					  pkt_found = 0;
 				  }

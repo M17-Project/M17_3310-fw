@@ -304,7 +304,7 @@ void showMainScreen(disp_dev_t *disp_dev)
 {
 	char str[24];
 
-	dispClear(disp_dev, 0);
+	dispClear(disp_dev, COL_WHITE);
 
 	sprintf(str, "%s %s", (dev_settings.channel.mode==RF_MODE_DIG) ? "Dig" : "Ana",
 			(dev_settings.tuning_mode==TUNING_MEM) ? "Mem" : "VFO");
@@ -402,7 +402,7 @@ void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
 //h_item - item to highlight, relative value: 0..3
 void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item)
 {
-	dispClear(disp_dev, 0);
+	dispClear(disp_dev, COL_WHITE);
 
 	setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, COL_BLACK, ALIGN_CENTER);
 

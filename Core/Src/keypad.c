@@ -365,7 +365,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 					sprintf(str, "T %ld.%04ld",
 							dev_settings->channel.tx_frequency/1000000,
 							(dev_settings->channel.tx_frequency%1000000)/100);
-					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, 1, 1);
+					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, COL_WHITE, 1);
 					setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 				}
 				else //if (dev_settings->tuning_mode==TUNING_MEM)
@@ -407,7 +407,7 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 					sprintf(str, "T %ld.%04ld",
 							dev_settings->channel.tx_frequency/1000000,
 							(dev_settings->channel.tx_frequency%1000000)/100);
-					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, 1, 1);
+					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, COL_WHITE, 1);
 					setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 				}
 				else //if (dev_settings->tuning_mode==TUNING_MEM)
