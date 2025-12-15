@@ -51,8 +51,8 @@ void dispClear(disp_dev_t *disp_dev, uint8_t fill)
 
 	dispGotoXY(disp_dev, 0, 0);
 
-    for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-    	dispWrite(disp_dev, 1, val);
+	for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
+		dispWrite(disp_dev, 1, val);
 }
 
 void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set)
@@ -89,8 +89,8 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, cons
 	uint8_t xp=0, w=0;
 	uint8_t len = strlen(str);
 
-    //get width
-    for(uint8_t i=0; i<len; i++)
+	//get width
+	for(uint8_t i=0; i<len; i++)
 		w+=f->symbol[str[i]-' '].width;
 
 	switch(align)
@@ -113,7 +113,7 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, cons
 
 		default: //ALIGN_LEFT
 			xp=0;
-        break;
+		break;
 	}
 
 	for(uint8_t i=0; i<len; i++)
@@ -126,6 +126,51 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, cons
 
 		setChar(disp_dev, xp, y, f, str[i], color);
 		xp+=f->symbol[str[i]-' '].width;
+	}
+
+	dispRefresh(disp_dev);
+}
+
+void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color)
+{
+	uint8_t xp = 0;
+
+	while (*str)
+	{
+		// measure next word
+		const char *w = str;
+		uint8_t wlen = 0;
+		uint8_t ww = 0;
+
+		while (w[wlen] && w[wlen] != ' ')
+		{
+			ww += f->symbol[w[wlen] - ' '].width;
+			wlen++;
+		}
+
+		// wrap before word if needed
+		if (xp + ww > RES_X)
+		{
+			y += f->height + 1;
+			xp = 0;
+		}
+
+		// draw word
+		for (uint8_t i = 0; i < wlen; i++)
+		{
+			setChar(disp_dev, xp, y, f, str[i], color);
+			xp += f->symbol[str[i] - ' '].width;
+		}
+
+		// draw space
+		if (*w == ' ')
+		{
+			setChar(disp_dev, xp, y, f, ' ', color);
+			xp += f->symbol[' ' - ' '].width;
+			wlen++;
+		}
+
+		str += wlen;
 	}
 
 	dispRefresh(disp_dev);
@@ -145,7 +190,7 @@ void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t 
 			for(uint8_t j=y0; j<=y1; j++)
 			{
 				setPixel(disp_dev, i, j, color);
-            }
+			}
 		}
 	}
 	else
@@ -159,8 +204,8 @@ void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t 
 		{
 			setPixel(disp_dev, x0, i, color);
 			setPixel(disp_dev, x1, i, color);
-        }
-    }
+		}
+	}
 
 	dispRefresh(disp_dev);
 }
@@ -240,26 +285,26 @@ void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
 //for text messages
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text)
 {
-    drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-    setString(disp_dev, 0, 10, &nokia_small, text, 0, ALIGN_LEFT);
+	drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, 1, 1);
+	setStringWordWrap(disp_dev, 0, 10, &nokia_small, text, 0);
 }
 
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text)
 {
-    drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-    setString(disp_dev, 3, 13, &nokia_big, text, 0, ALIGN_ARB);
+	drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, 1, 1);
+	setString(disp_dev, 3, 13, &nokia_big, text, 0, ALIGN_ARB);
 }
 
 void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
 {
-    drawRect(disp_dev, 0, 0, 21, 8, 1, 1);
+	drawRect(disp_dev, 0, 0, 21, 8, 1, 1);
 
-    if (mode == TEXT_LOWERCASE)
-        setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", 0, ALIGN_LEFT);
-    else if (mode == TEXT_UPPERCASE)
-        setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", 0, ALIGN_LEFT);
-    else
-        setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", 0, ALIGN_LEFT);
+	if (mode == TEXT_LOWERCASE)
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", 0, ALIGN_LEFT);
+	else if (mode == TEXT_UPPERCASE)
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", 0, ALIGN_LEFT);
+	else
+		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", 0, ALIGN_LEFT);
 }
 
 //show menu with item highlighting
@@ -267,20 +312,20 @@ void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
 //h_item - item to highlight, relative value: 0..3
 void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item)
 {
-    dispClear(disp_dev, 0);
+	dispClear(disp_dev, 0);
 
-    setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, 0, ALIGN_CENTER);
+	setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, 0, ALIGN_CENTER);
 
-    for(uint8_t i=0; i<start_item+menu->num_items && i<4; i++)
-    {
-    	//highlight
-    	if(i==h_item)
-    		drawRect(disp_dev, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
+	for(uint8_t i=0; i<start_item+menu->num_items && i<4; i++)
+	{
+		//highlight
+		if(i==h_item)
+			drawRect(disp_dev, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
 
-    	setString(disp_dev, 1, (i+1)*9, &nokia_small, menu->item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
-    	if(menu->value[i+start_item][0]!=0)
-    		setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
-    }
+		setString(disp_dev, 1, (i+1)*9, &nokia_small, menu->item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
+		if(menu->value[i+start_item][0]!=0)
+			setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
+	}
 }
 
 void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state)

@@ -34,6 +34,7 @@ void dispClear(disp_dev_t *disp_dev, uint8_t fill);
 void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set);
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color);
 void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align);
+void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color);
 
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill);
 void showMainScreen(disp_dev_t *disp_dev);
