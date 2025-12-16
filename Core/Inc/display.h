@@ -39,9 +39,11 @@ void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, cons
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill);
 void showMainScreen(disp_dev_t *disp_dev);
 void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, const char *callsign);
-void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode);
-void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode);
-void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode);
+
+void showRcvdTextMessage(disp_dev_t *disp_dev);
+void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t entry_mode);
+void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t entry_mode);
+void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t entry_mode);
 
 void redrawMsgEntry(disp_dev_t *disp_dev, const char *text);
 void redrawValueEntry(disp_dev_t *disp_dev, const char *text);

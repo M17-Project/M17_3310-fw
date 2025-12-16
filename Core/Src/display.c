@@ -355,20 +355,29 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 	}
 }
 
-void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
+void showRcvdTextMessage(disp_dev_t *disp_dev)
 {
 	dispClear(disp_dev, COL_WHITE);
 
-	redrawTextEntryIcon(disp_dev, text_mode);
+	setString(disp_dev, 0, 0, &nokia_small, "Message:", COL_BLACK, ALIGN_LEFT);
+
+	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "OK", COL_BLACK, ALIGN_CENTER);
+}
+
+void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t entry_mode)
+{
+	dispClear(disp_dev, COL_WHITE);
+
+	redrawTextEntryIcon(disp_dev, entry_mode);
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", COL_BLACK, ALIGN_CENTER);
 }
 
-void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t text_mode)
+void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t entry_mode)
 {
 	dispClear(disp_dev, COL_WHITE);
 
-	redrawTextEntryIcon(disp_dev, text_mode);
+	redrawTextEntryIcon(disp_dev, entry_mode);
 
 	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, COL_BLACK, 0);
 
@@ -388,13 +397,13 @@ void redrawValueEntry(disp_dev_t *disp_dev, const char *text)
 	setString(disp_dev, 3, 13, &nokia_big, text, COL_BLACK, ALIGN_ARB);
 }
 
-void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t mode)
+void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t entry_mode)
 {
 	drawRect(disp_dev, 0, 0, 21, 8, COL_WHITE, 1);
 
-	if (mode == TEXT_LOWERCASE)
+	if (entry_mode == TEXT_LOWERCASE)
 		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", COL_BLACK, ALIGN_LEFT);
-	else if (mode == TEXT_UPPERCASE)
+	else if (entry_mode == TEXT_UPPERCASE)
 		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", COL_BLACK, ALIGN_LEFT);
 	else
 		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", COL_BLACK, ALIGN_LEFT);
