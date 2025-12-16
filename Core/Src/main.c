@@ -22,17 +22,21 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
-#include <string.h>
-#include <stdarg.h>
-#include <math.h>
-
-#include "usbd_cdc_if.h"
-
-#include "fonts.h"
-#include "../t9/dict_en.h"
-#include "../t9/t9.h"
-#include <m17.h>
+#include "typedefs.h"
+#include "keymaps.h"
+#include "menus.h"
+#include "settings.h"
+#include "ring.h"
+#include "display.h"
+#include "dsp.h"
+#include "platform.h"
+#include "keypad.h"
+#include "ringtones.h"
+#include "rf_module.h"
+#include "nvmem.h"
+#include "usb_cmds.h"
+#include "text_entry.h"
+#include "debug.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -42,27 +46,19 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define FW_VER					"1.1.4"
-#define DAC_IDLE				2048
-#define RES_X					84
-#define RES_Y					48
-#define DISP_BUFF_SIZ			(RES_X*RES_Y/8)
-#define MEM_START				(0x080E0000U) //last sector, 128kB
-#define CH_MAX_NUM				128
 
-#define FIX_TIMER_TRIGGER(handle_ptr) (__HAL_TIM_CLEAR_FLAG(handle_ptr, TIM_SR_UIF))
-
-#define arrlen(x) (sizeof(x)/sizeof(*x))
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
+#include "macros.h"
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
+ADC_HandleTypeDef hadc2;
 DMA_HandleTypeDef hdma_adc1;
+DMA_HandleTypeDef hdma_adc2;
 
 DAC_HandleTypeDef hdac;
 DMA_HandleTypeDef hdma_dac1;
@@ -73,6 +69,7 @@ SPI_HandleTypeDef hspi1;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim7;
 TIM_HandleTypeDef htim8;
@@ -81,128 +78,29 @@ TIM_HandleTypeDef htim14;
 UART_HandleTypeDef huart4;
 
 /* USER CODE BEGIN PV */
-//superloop rotation counter
-uint16_t r;
+//timing
+uint32_t t_now, t_last;
 
 //display
 uint8_t disp_buff[DISP_BUFF_SIZ];
+disp_dev_t disp_dev;
 
-//some typedefs
-typedef enum text_entry
-{
-    TEXT_LOWERCASE,
-	TEXT_UPPERCASE,
-	TEXT_T9
-} text_entry_t;
-
-text_entry_t text_mode = TEXT_LOWERCASE;
+//this handles all kinds of text entry
+abc_t text_entry; //entry mode is TEXT_LOWERCASE by default
 
 //menus state machine
-#include "menus.h"
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
 disp_state_t curr_disp_state = DISP_NONE;
 
-//keys
-typedef enum key
-{
-	KEY_NONE,
-	KEY_OK,
-	KEY_C,
-	KEY_LEFT,
-	KEY_RIGHT,
-	KEY_1,
-	KEY_2,
-	KEY_3,
-	KEY_4,
-	KEY_5,
-	KEY_6,
-	KEY_7,
-	KEY_8,
-	KEY_9,
-	KEY_ASTERISK,
-	KEY_0,
-	KEY_HASH
-} kbd_key_t;
-
-//settings
-typedef enum ch_bw
-{
-	RF_BW_12K5,
-	RF_BW_25K
-} ch_bw_t;
-
-typedef enum rf_mode
-{
-	RF_MODE_FM,
-	RF_MODE_4FSK
-} rf_mode_t;
-
-typedef enum rf_power
-{
-	RF_PWR_LOW,
-	RF_PWR_HIGH
-} rf_power_t;
-
-//key maps
-//lowercase
-const char key_map_lc[11][15] =
-{
-	".,?!1'\"-+()@/:", //KEY_1
-	"abc2", //KEY_2
-	"def3", //KEY_3
-	"ghi4", //KEY_4
-	"jkl5", //KEY_5
-	"mno6", //KEY_6
-	"pqrs7", //KEY_7
-	"tuv8", //KEY_8
-	"wxyz9", //KEY_9
-	"*=#", //KEY_ASTERISK
-	" 0", //KEY_0
-};
-
-//uppercase
-const char key_map_uc[11][15] =
-{
-	".,?!1'\"-+()@/:", //KEY_1
-	"ABC2", //KEY_2
-	"DEF3", //KEY_3
-	"GHI4", //KEY_4
-	"JKL5", //KEY_5
-	"MNO6", //KEY_6
-	"PQRS7", //KEY_7
-	"TUV8", //KEY_8
-	"WXYZ9", //KEY_9
-	"*=#", //KEY_ASTERISK
-	" 0", //KEY_0
-};
-
-//text/T9 related variables
-volatile char code[15]="";
-char text_entry[256]=""; //this handles all kinds of text entry
-volatile uint8_t pos=0;
-
 //usb-related
-uint8_t usb_rx[APP_RX_DATA_SIZE];
+uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
 uint32_t usb_len;
 uint8_t usb_drdy;
-
-//settings
-typedef struct ch_settings
-{
-	rf_mode_t mode;
-	ch_bw_t ch_bw;
-	rf_power_t rf_pwr;
-	char ch_name[24];
-	uint32_t rx_frequency;
-	uint32_t tx_frequency;
-	char dst[12];
-	uint8_t can;
-} ch_settings_t;
 
 //default channel settings
 const ch_settings_t def_channel =
 {
-	RF_MODE_4FSK,
+	RF_MODE_DIG,
 	RF_BW_12K5,
 	RF_PWR_LOW,
 	"M17 IARU R1",
@@ -212,46 +110,12 @@ const ch_settings_t def_channel =
 	0
 };
 
-typedef struct codeplug
-{
-	char name[24];
-	uint8_t num_items;
-	ch_settings_t channel[CH_MAX_NUM];
-} codeplug_t;
-
-codeplug_t codeplug;
-
-typedef enum tuning_mode
-{
-	TUNING_VFO,
-	TUNING_MEM
-} tuning_mode_t;
-
-typedef struct dev_settings
-{
-	char src_callsign[12];
-	char welcome_msg[2][24];
-
-	uint8_t backlight_level;
-	uint8_t backlight_timer;
-	uint8_t backlight_always;
-	uint16_t kbd_timeout; //keyboard keypress timeout (for text entry)
-	uint16_t kbd_delay; //insensitivity delay after keypress detection
-	float freq_corr;
-
-	tuning_mode_t tuning_mode;
-	ch_settings_t channel;
-	uint16_t ch_num;
-
-	char refl_name[12];
-} dev_settings_t;
-
 dev_settings_t def_dev_settings =
 {
 	"N0KIA",
 	{"OpenRTX", "rulez"},
 
-	160,
+	200,
 	5,
 	0,
 	750,
@@ -262,67 +126,39 @@ dev_settings_t def_dev_settings =
 	def_channel,
 	0,
 
-	"M17-M17 C"
+	"@ALL"
 };
 
 dev_settings_t dev_settings;
 
-//editable settings
-typedef enum edit_set
-{
-	EDIT_NONE,
-	EDIT_M17_SRC_CALLSIGN,
-	EDIT_M17_DST_CALLSIGN,
-	EDIT_M17_CAN,
-	EDIT_RF_PPM,
-	EDIT_RF_PWR
-} edit_set_t;
+//codeplug
+extern codeplug_t codeplug;
 
 edit_set_t edit_set = EDIT_NONE;
 
 //M17
-uint16_t frame_samples[2][SYM_PER_FRA*10]; //sps=10
+uint16_t frame_samples[2][SYM_PER_FRA*10];	//sps=10
 int8_t frame_symbols[SYM_PER_FRA];
 lsf_t lsf_rx, lsf_tx;
-uint8_t frame_cnt; //frame counter, preamble=0
-volatile uint8_t frame_pend; //frame generation pending?
+uint8_t frame_cnt;							//frame counter, preamble=0
+volatile uint8_t frame_pend;				//frame generation pending?
+volatile uint8_t bsb_tx_dma_half;
 uint8_t packet_payload[33*25];
 uint8_t packet_bytes;
-uint8_t payload[26]; //frame payload
-volatile uint8_t debug_tx; //debug: transmit dummy signal?
+uint8_t payload[26];						//frame payload
+const uint16_t sms_max_len = sizeof(packet_payload)-1-1-2;
+uint8_t debug_flag;							//debug flag (for testing)
 
 //radio
-typedef enum radio_state
-{
-	RF_RX,
-	RF_TX
-} radio_state_t;
-
 radio_state_t radio_state;
 
 //ADC
-volatile uint16_t adc_vals[2];
-volatile uint16_t bsb_cnt;
-volatile uint16_t bsb_in[960*2];
+volatile uint16_t batt_adc;
+float sw_corr_samples[8*5+5];				//samples for syncword search
+float pld_symbs[SYM_PER_PLD];				//payload symbols
 
-//ring buffer
-typedef struct ring
-{
-    volatile void *buffer;
-    uint16_t size;
-    uint16_t wr_pos;
-    uint16_t rd_pos;
-    uint16_t num_items;
-} ring_t;
-
-volatile ring_t raw_bsb_ring;
-volatile uint16_t raw_bsb_buff[960];
-float flt_bsb_buff[8*5];		//TODO: hold extra 2 samples for L2 norm minimum lookup
-float pld_symbs[SYM_PER_PLD];	//payload symbols
-uint8_t num_pld_symbs;
-
-uint8_t sample_offset;	//location of the L2 minimum
-uint8_t str_syncd;		//syncd with the incoming stream?
+uint8_t sample_offset;						//location of the squared-L2 minimum
+uint8_t lsf_found, str_found, pkt_found;	//syncd with the incoming stream?
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -340,1958 +176,74 @@ static void MX_TIM7_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_TIM14_Init(void);
 static void MX_TIM8_Init(void);
+static void MX_ADC2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
-void setRF(radio_state_t state);
-void setFreqRF(uint32_t freq, float corr);
-void setBacklight(uint8_t level);
-void chBwRF(ch_bw_t bw);
-uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size);
-void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-//debug print
-void dbg_print(const char* fmt, ...)
-{
-	char str[1024];
-	va_list ap;
-
-	va_start(ap, fmt);
-	vsprintf(str, fmt, ap);
-	va_end(ap);
-
-	CDC_Transmit_FS((uint8_t*)str, strlen(str));
-}
-
-//ring buffer functions
-void initRing(volatile ring_t *ring, volatile void *buffer, uint16_t size)
-{
-    ring->buffer = buffer;
-    ring->size = size;
-    ring->wr_pos = 0;
-    ring->rd_pos = 0;
-    ring->num_items = 0;
-}
-
-uint16_t getNumItems(volatile ring_t *ring)
-{
-    return ring->num_items;
-}
-
-uint16_t getSize(volatile ring_t *ring)
-{
-    return ring->size;
-}
-
-uint8_t pushU16Value(volatile ring_t *ring, uint16_t val)
-{
-    uint16_t size = getSize(ring);
-
-    if(getNumItems(ring)<size)
-    {
-        ((uint16_t*)ring->buffer)[ring->wr_pos]=val;
-        ring->wr_pos = (ring->wr_pos+1) % size;
-        ring->num_items++;
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
-uint8_t pushFloatValue(volatile ring_t *ring, float val)
-{
-    uint16_t size = getSize(ring);
-
-    if(getNumItems(ring)<size)
-    {
-        ((float*)ring->buffer)[ring->wr_pos]=val;
-        ring->wr_pos = (ring->wr_pos+1) % size;
-        ring->num_items++;
-        return 0;
-    }
-    else
-    {
-        return 1;
-    }
-}
-
-uint16_t popU16Value(volatile ring_t *ring)
-{
-    if(getNumItems(ring)>0)
-    {
-        uint16_t size = getSize(ring);
-        uint16_t pos = ring->rd_pos;
-
-        ring->rd_pos = (ring->rd_pos+1) % size;
-        ring->num_items--;
-
-        return ((uint16_t*)ring->buffer)[pos];
-    }
-
-    return 0;
-}
-
-float popFloatValue(volatile ring_t *ring)
-{
-    if(getNumItems(ring)>0)
-    {
-        uint16_t size = getSize(ring);
-        uint16_t pos = ring->rd_pos;
-
-        ring->rd_pos = (ring->rd_pos+1) % size;
-        ring->num_items--;
-
-        return ((float*)ring->buffer)[pos];
-    }
-
-    return 0.0f;
-}
-
-//RX baseband filtering (sps=5)
-float fltSample(const uint16_t sample)
-{
-	const float gain = 18.0f*1.8f/2048.0f/sqrtf(5.0f); //gain found experimentally
-	static int16_t sr[41];
-
-	//push the shift register
-	for(uint8_t i=0; i<40; i++)
-		sr[i]=sr[i+1];
-	sr[40]=(int16_t)sample-2048; //push the sample, remove DC offset
-
-	float acc=0.0f;
-	for(uint8_t i=0; i<41; i++)
-	{
-		acc += (float)sr[i]*rrc_taps_5[i];
-	}
-
-	return acc*gain;
-}
-
-//flush RX baseband filter
-void flushBsbFlt(void)
-{
-	for(uint8_t i=0; i<41; i++)
-		fltSample(0);
-}
-
-//TX baseband filtering (sps=10)
-void filter_symbols(uint16_t out[SYM_PER_FRA*10], const int8_t in[SYM_PER_FRA], const float* flt, uint8_t phase_inv)
-{
-	static int8_t last[81]; //memory for last symbols
-
-	for(uint8_t i=0; i<SYM_PER_FRA; i++)
-	{
-		for(uint8_t j=0; j<10; j++)
-		{
-			for(uint8_t k=0; k<80; k++)
-				last[k]=last[k+1];
-
-			if(j==0)
-			{
-				if(phase_inv) //optional phase inversion
-					last[80]=-in[i];
-				else
-					last[80]= in[i];
-			}
-			else
-				last[80]=0;
-
-			float acc=0.0f;
-			for(uint8_t k=0; k<81; k++)
-				acc+=last[k]*flt[k];
-
-			out[i*10+j]=DAC_IDLE+acc*250.0f;
-		}
-	}
-}
-
-//interrupts
-void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
-{
-	//TIM1 - buzzer timer (by default at 1kHz)
-	//TIM2 - LED backlight PWM timer
-	//TIM6 - 48kHz base timer (for the DAC)
-
-	//TIM7 - text entry timer
-	if(htim->Instance==TIM7)
-	{
-		HAL_TIM_Base_Stop(&htim7);
-		TIM7->CNT=0;
-	}
-
-	//TIM8 - 24kHz baseband timer (for the ADC)
-
-	//TIM14 - display backlight timeout timer
-	else if(htim->Instance==TIM14)
-	{
-		HAL_TIM_Base_Stop(&htim14);
-		TIM14->CNT=0;
-		setBacklight(0);
-	}
-}
-
-void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac)
-{
-	if(radio_state==RF_TX)
-	{
-		frame_pend=1;
-	}
-}
-
-void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac)
-{
-	if(radio_state==RF_TX)
-	{
-		HAL_DAC_Start_DMA(hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[frame_cnt%2][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
-	}
-}
-
-//ADC
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-	//push raw baseband sample into a ring buffer
-	pushU16Value(&raw_bsb_ring, adc_vals[0]);
-
-	//TODO: debug stuff
-	/*bsb_in[bsb_cnt]=adc_vals[0];
-	bsb_cnt++;
-
-	//Debug: send the samples over UART
-	if(bsb_cnt==960)
-	{
-		CDC_Transmit_FS((uint8_t*)&bsb_in[0], 960*2);
-	}
-	else if(bsb_cnt==960*2)
-	{
-		CDC_Transmit_FS((uint8_t*)&bsb_in[960], 960*2);
-		bsb_cnt=0;
-	}*/
-}
-
-/*void ADC_SetActiveChannel(ADC_HandleTypeDef *hadc, uint32_t channel)
-{
-	ADC_ChannelConfTypeDef sConfig = {0};
-	sConfig.Channel = channel;
-	sConfig.Rank = 1;
-	sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
-	if(HAL_ADC_ConfigChannel(hadc, &sConfig)!=HAL_OK)
-	{
-		Error_Handler();
-	}
-}*/
-
-uint16_t getBattVoltage(void)
-{
-	/*ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_1);
-	HAL_ADC_Start(&hadc1);
-	while(HAL_ADC_PollForConversion(&hadc1, 5)!=HAL_OK);*/
-
-	return adc_vals[1]/4095.0f * 3300.0f * 2.0f; //(ADC1->DR)/4095.0f * 3300.0f * 2.0f;
-}
-
-//get baseband sample - debug
-uint16_t getBasebandSample(void)
-{
-	/*ADC_SetActiveChannel(&hadc1, ADC_CHANNEL_0);
-	HAL_ADC_Start(&hadc1);
-	while(HAL_ADC_PollForConversion(&hadc1, 0)!=HAL_OK);*/
-
-	return adc_vals[0]/4095.0f * 3300.0f; //(ADC1->DR)/4095.0f * 3300.0f;
-}
-
-//T9 related
-char *addCode(char *code, char symbol)
-{
-	code[strlen(code)] = symbol;
-
-	return getWord(dict_en, code);
-}
-
-//hardware
-void setBacklight(uint8_t level)
-{
-	TIM2->CCR3 = level;
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
-}
-
-void actVibr(uint8_t period)
-{
-	VIBR_GPIO_Port->BSRR = (uint32_t)VIBR_Pin;
-	HAL_Delay(period);
-	VIBR_GPIO_Port->BSRR = ((uint32_t)VIBR_Pin<<16);
-}
-
-void playBeep(uint16_t duration) //blocking
-{
-	//1kHz (84MHz master clock)
-	TIM1->ARR = 10-1;
-	TIM1->PSC = 8400-1; //TODO: check if this really works
-
-	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-	HAL_Delay(duration);
-	HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
-}
-
-//display
-void dispWrite(uint8_t dc, uint8_t val)
-{
-	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, dc);
-
-	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 0);
-	HAL_SPI_Transmit(&hspi1, &val, 1, 10);
-	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
-}
-
-void dispInit(void)
-{
-	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, 1);
-	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
-	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1);
-
-	//toggle LCD reset
-	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 0); //RES low
-	HAL_Delay(10);
-	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1); //RES high
-	HAL_Delay(10);
-
-	dispWrite(0, 0x21);			//extended commands
-	dispWrite(0, 0x80|0x48);	//contrast (0x00 to 0x7F)
-	dispWrite(0, 0x06);			//temp coeff.
-	dispWrite(0, 0x13);			//LCD bias 1:48
-	dispWrite(0, 0x20);			//standard commands
-	dispWrite(0, 0x0C);			//normal mode
-}
-
-void dispGotoXY(uint8_t x, uint8_t y)
-{
-	dispWrite(0, 0x80|(6*x));
-	dispWrite(0, 0x40|y);
-}
-
-void dispRefresh(uint8_t buff[DISP_BUFF_SIZ])
-{
-	dispGotoXY(0, 0);
-
-	for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-		dispWrite(1, buff[i]);
-}
-
-void dispClear(uint8_t buff[DISP_BUFF_SIZ], uint8_t fill)
-{
-	uint8_t val = fill ? 0xFF : 0;
-
-	memset(buff, val, DISP_BUFF_SIZ);
-
-	dispGotoXY(0, 0);
-
-    for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-    	dispWrite(1, val);
-}
-
-void setPixel(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, uint8_t set)
-{
-	if(x<RES_X && y<RES_Y)
-	{
-		uint16_t loc = x + (y/8)*RES_X;
-
-		if(!set)
-			buff[loc] |= (1<<(y%8));
-		else
-			buff[loc] &= ~(1<<(y%8));
-	}
-}
-
-void setChar(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color)
-{
-	uint8_t h=f->height;
-	c-=' ';
-
-	for(uint8_t i=0; i<h; i++)
-	{
-		for(uint8_t j=0; j<f->symbol[(uint8_t)c].width; j++)
-		{
-			if(f->symbol[(uint8_t)c].rows[i] & 1<<(((h>8)?(h+3):(h))-1-j)) //fonts are right-aligned
-				setPixel(buff, x+j, y+i, color);
-		}
-	}
-}
-
-//TODO: fix multiline text alignment when not in ALIGN_LEFT mode
-void setString(uint8_t buff[DISP_BUFF_SIZ], uint8_t x, uint8_t y, const font_t *f, char *str, uint8_t color, align_t align)
-{
-	uint8_t xp=0, w=0;
-
-    //get width
-    for(uint8_t i=0; i<strlen(str); i++)
-		w+=f->symbol[str[i]-' '].width;
-
-	switch(align)
-	{
-		case ALIGN_LEFT:
-			xp=0;
-		break;
-
-		case ALIGN_CENTER:
-			xp=(RES_X-w)/2+1;
-		break;
-
-		case ALIGN_RIGHT:
-			xp=RES_X-w;
-		break;
-
-		case ALIGN_ARB:
-			xp=x;
-		break;
-
-		default: //ALIGN_LEFT
-			xp=0;
-        break;
-	}
-
-	for(uint8_t i=0; i<strlen(str); i++)
-	{
-		if(xp > RES_X-f->symbol[str[i]-' '].width)
-		{
-			y+=f->height+1;
-			xp=0; //ALIGN_LEFT
-		}
-
-		setChar(buff, xp, y, f, str[i], color);
-		xp+=f->symbol[str[i]-' '].width;
-	}
-
-	dispRefresh(buff);
-}
-
-void drawRect(uint8_t buff[DISP_BUFF_SIZ], uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill)
-{
-	x0 = (x0>=RES_X) ? RES_X-1 : x0;
-	y0 = (y0>=RES_Y) ? RES_Y-1 : y0;
-	x1 = (x1>=RES_X) ? RES_X-1 : x1;
-	y1 = (y1>=RES_Y) ? RES_Y-1 : y1;
-
-	if(fill)
-	{
-		for(uint8_t i=x0; i<=x1; i++)
-		{
-			for(uint8_t j=y0; j<=y1; j++)
-			{
-				setPixel(buff, i, j, color);
-            }
-		}
-	}
-	else
-	{
-		for(uint8_t i=x0; i<=x1; i++)
-		{
-			setPixel(buff, i, y0, color);
-			setPixel(buff, i, y1, color);
-		}
-		for(uint8_t i=y0+1; i<=y1-1; i++)
-		{
-			setPixel(buff, x0, i, color);
-			setPixel(buff, x1, i, color);
-        }
-    }
-
-	dispRefresh(buff);
-}
-
-void showMainScreen(uint8_t buff[DISP_BUFF_SIZ])
-{
-	char str[24];
-
-	dispClear(buff, 0);
-
-	sprintf(str, "%s", (dev_settings.channel.mode==RF_MODE_4FSK)?"M17":"FM");
-	setString(buff, 0, 0, &nokia_small, str, 0, ALIGN_LEFT);
-
-	setString(buff, 0, 12, &nokia_big, dev_settings.channel.ch_name, 0, ALIGN_CENTER);
-
-	sprintf(str, "R %ld.%04ld",
-			dev_settings.channel.rx_frequency/1000000,
-			(dev_settings.channel.rx_frequency - (dev_settings.channel.rx_frequency/1000000)*1000000)/100);
-	setString(buff, 0, 27, &nokia_small, str, 0, ALIGN_CENTER);
-
-	sprintf(str, "T %ld.%04ld",
-			dev_settings.channel.tx_frequency/1000000,
-			(dev_settings.channel.tx_frequency - (dev_settings.channel.tx_frequency/1000000)*1000000)/100);
-	setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
-
-	//is the battery charging? (read /CHG signal)
-	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
-	{
-		setString(buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT); //display charging status
-	}
-	else
-	{
-		char u_batt_str[8];
-		uint16_t u_batt=getBattVoltage();
-		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
-		setString(buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT); //display voltage
-	}
-}
-
-void dispSplash(uint8_t buff[DISP_BUFF_SIZ], char *line1, char *line2, char *callsign)
-{
-	setBacklight(0);
-
-	setString(buff, 0, 9, &nokia_big, line1, 0, ALIGN_CENTER);
-	setString(buff, 0, 22, &nokia_big, line2, 0, ALIGN_CENTER);
-	setString(buff, 0, 40, &nokia_small, callsign, 0, ALIGN_CENTER);
-
-	//fade in
-	if(dev_settings.backlight_always==1)
-	{
-		for(uint16_t i=0; i<dev_settings.backlight_level; i++)
-		{
-			setBacklight(i);
-			HAL_Delay(5);
-		}
-	}
-}
-
-void showTextMessageEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
-{
-	dispClear(buff, 0);
-
-	if(text_mode==TEXT_LOWERCASE)
-		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
-	else if(text_mode==TEXT_UPPERCASE)
-		setString(buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
-	else //if (text_mode==TEXT_T9)
-		setString(buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
-
-	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Send", 0, ALIGN_CENTER);
-}
-
-void showTextValueEntry(uint8_t buff[DISP_BUFF_SIZ], text_entry_t text_mode)
-{
-	dispClear(buff, 0);
-
-	if(text_mode==TEXT_LOWERCASE)
-		setString(buff, 0, 0, &nokia_small, "abc", 0, ALIGN_LEFT);
-	else if(text_mode==TEXT_UPPERCASE)
-		setString(buff, 0, 0, &nokia_small, "ABC", 0, ALIGN_LEFT);
-	else //if (text_mode==TEXT_T9)
-		setString(buff, 0, 0, &nokia_small, "T9", 0, ALIGN_LEFT);
-
-	drawRect(buff, 0, 9, RES_X-1, RES_Y-11, 0, 0);
-
-	setString(buff, 0, RES_Y-8, &nokia_small_bold, "Ok", 0, ALIGN_CENTER);
-}
-
-//show menu with item highlighting
-//start_item - absolute index of first item to display
-//h_item - item to highlight, relative value: 0..3
-void showMenu(uint8_t buff[DISP_BUFF_SIZ], const disp_t menu, const uint8_t start_item, const uint8_t h_item)
-{
-    dispClear(buff, 0);
-
-    setString(buff, 0, 0, &nokia_small_bold, (char*)menu.title, 0, ALIGN_CENTER);
-
-    for(uint8_t i=0; i<start_item+menu.num_items && i<4; i++)
-    {
-    	//highlight
-    	if(i==h_item)
-    		drawRect(buff, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, 0, 1);
-
-    	setString(buff, 1, (i+1)*9, &nokia_small, (char*)menu.item[i+start_item], (i==h_item)?1:0, ALIGN_ARB);
-    	if(menu.value[i+start_item][0]!=0)
-    		setString(buff, 0, (i+1)*9, &nokia_small, (char*)menu.value[i+start_item], (i==h_item)?1:0, ALIGN_RIGHT);
-    }
-}
-
 //messaging - initialize text packet transmission
 //note: some variables inside this function are global
 void initTextTX(const char *message)
 {
 	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC sample clock
+	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
 
 	memset(payload, 0, 26);
 
 	uint16_t msg_len = strlen(message);
+	if (msg_len > sms_max_len)
+		msg_len = sms_max_len;
 
-	packet_payload[0]=0x05; //packet type: SMS
+	packet_payload[0] = 0x05; //packet type: SMS
 
-	strcpy((char*)&packet_payload[1], message);
+	strncpy((char*)&packet_payload[1], message, msg_len);
+	packet_payload[msg_len+1] = 0; //null terminaton
 
 	uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
 	packet_payload[msg_len+2] = crc>>8;
 	packet_payload[msg_len+3] = crc&0xFF;
 
-	memset(&packet_payload[msg_len+4], 0, sizeof(packet_payload)-(msg_len+4));
-
-	packet_bytes=1+msg_len+1+2; //type, payload, null termination, crc
+	packet_bytes = 1+msg_len+1+2; //type, payload, null termination, crc
 
 	radio_state = RF_TX;
 	setRF(radio_state);
-	frame_cnt=0;
-	frame_pend=1;
+	//TODO: RF PTT line should work
+	//HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 0);
+
+	frame_cnt = 0;
+	frame_pend = 1;
 }
 
 //initialize debug M17 transmission
 void initDebugTX(void)
 {
+	// start
 	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC sample clock
+	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
 
 	radio_state = RF_TX;
 	setRF(radio_state);
-	debug_tx=1;
-}
-
-//scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
-kbd_key_t scanKeys(uint8_t rep)
-{
-	kbd_key_t key = KEY_NONE;
-
-	//PD2 down means KEY_OK is pressed
-	if(BTN_OK_GPIO_Port->IDR & BTN_OK_Pin)
-	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
-		return KEY_OK;
-	}
-
-	//column 1
-	COL_1_GPIO_Port->BSRR = (uint32_t)COL_1_Pin;
-	HAL_Delay(1);
-	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
-		key = KEY_C;
-	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
-		key = KEY_1;
-	else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
-		key = KEY_4;
-	else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
-		key = KEY_7;
-	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
-		key = KEY_ASTERISK;
-	COL_1_GPIO_Port->BSRR = ((uint32_t)COL_1_Pin<<16);
-	if(key!=KEY_NONE)
-	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
-		return key;
-	}
-
-	//column 2
-	COL_2_GPIO_Port->BSRR = (uint32_t)COL_2_Pin;
-	HAL_Delay(1);
-	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
-		key = KEY_LEFT;
-	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
-		key = KEY_2;
-	else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
-		key = KEY_5;
-	else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
-		key = KEY_8;
-	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
-		key = KEY_0;
-	COL_2_GPIO_Port->BSRR = ((uint32_t)COL_2_Pin<<16);
-	if(key!=KEY_NONE)
-	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
-		return key;
-	}
-
-	//column 3
-	COL_3_GPIO_Port->BSRR = (uint32_t)COL_3_Pin;
-	HAL_Delay(1);
-	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
-		key = KEY_RIGHT;
-	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
-		key = KEY_3;
-	else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
-		key = KEY_6;
-	else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
-		key = KEY_9;
-	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
-		key = KEY_HASH;
-	COL_3_GPIO_Port->BSRR = ((uint32_t)COL_3_Pin<<16);
-	if(key!=KEY_NONE)
-	{
-		if(radio_state==RF_RX)
-			HAL_Delay(rep);
-	}
-
-	return key;
-}
-
-//push a character into the text message buffer
-void pushCharBuffer(const char key_map[][sizeof(key_map_lc[0])], kbd_key_t key)
-{
-	key -= KEY_1; //start indexing at 0
-	char *key_chars = (char*)key_map[key];
-	uint8_t map_len = strlen(key_chars);
-	uint8_t new = 1;
-
-	HAL_TIM_Base_Stop(&htim7);
-	pos=strlen(text_entry);
-	char *last = &text_entry[pos>0 ? pos-1 : 0];
-
-	if(TIM7->CNT>0)
-	{
-		for(uint8_t i=0; i<map_len; i++)
-		{
-			if(*last==key_chars[i])
-			{
-				*last=key_chars[(i+1)%map_len];
-				new = 0;
-				break;
-			}
-		}
-
-		if(new)
-		{
-			text_entry[pos] = key_chars[0];
-			if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
-			{
-				pos++;
-			}
-		}
-	}
-	else
-	{
-		text_entry[pos] = key_chars[0];
-		if(key==KEY_0-KEY_1 && text_mode==TEXT_T9)
-		{
-			pos++;
-		}
-	}
-
-	TIM7->CNT=0;
-	HAL_TIM_Base_Start_IT(&htim7);
-}
-
-//push characted for T9 code
-void pushCharT9(kbd_key_t key)
-{
-	char c;
-	if(key!=KEY_ASTERISK)
-		c = '2'+key-KEY_2;
-	else
-		c = '*';
-	char *w = addCode((char*)code, c);
-
-	if(strlen(w)!=0)
-	{
-		strcpy(&text_entry[pos], w);
-	}
-	else if(key!=KEY_ASTERISK)
-	{
-		text_entry[strlen(text_entry)]='?';
-	}
-}
-
-void handleKey(uint8_t buff[DISP_BUFF_SIZ], disp_state_t *disp_state,
-		text_entry_t *text_mode, radio_state_t *radio_state, dev_settings_t *dev_settings,
-		kbd_key_t key, edit_set_t *edit_set)
-{
-	//backlight on
-	if(key!=KEY_NONE && dev_settings->backlight_always==0)
-	{
-		if(TIM14->CNT==0)
-		{
-			setBacklight(dev_settings->backlight_level);
-			FIX_TIMER_TRIGGER(&htim14);
-			HAL_TIM_Base_Start_IT(&htim14);
-		}
-		else
-		{
-			TIM14->CNT=0;
-		}
-	}
-
-	//find out where to go next
-	uint8_t item = menu_pos + menu_pos_hl;
-	disp_state_t next_disp = displays[*disp_state].next_disp[item];
-
-	//do something based on the key pressed and current state
-	switch(key)
-	{
-		case KEY_OK:
-			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
-
-			if(next_disp != DISP_NONE)
-			{
-				menu_pos=menu_pos_hl=0;
-			}
-
-			//main screen
-			if(*disp_state==DISP_MAIN_SCR)
-			{
-				//clear the text entry buffer before entering the main menu
-				//TODO: this will have to be moved later
-				memset(text_entry, 0, strlen(text_entry));
-
-				*disp_state = next_disp;
-				showMenu(buff, displays[*disp_state], 0, 0);
-			}
-
-			//main menu
-			else if(*disp_state==DISP_MAIN_MENU)
-			{
-				*disp_state = next_disp;
-
-				if(item==0) //"Messaging"
-				{
-					showTextMessageEntry(buff, *text_mode);
-				}
-				else if(item==1) //"Settings"
-				{
-					//load settings from NVMEM
-					loadDeviceSettings(dev_settings, &def_dev_settings);
-					showMenu(buff, displays[*disp_state], 0, 0);
-				}
-				else
-				{
-					showMenu(buff, displays[*disp_state], 0, 0);
-				}
-			}
-
-			//Radio settings
-			else if(*disp_state==DISP_RADIO_SETTINGS)
-			{
-				if(item==0)
-					*edit_set=EDIT_RF_PPM;
-				else if(item==1)
-					*edit_set=EDIT_RF_PWR;
-
-				//all menu entries are editable
-				*disp_state = next_disp;
-				showTextValueEntry(buff, *text_mode);
-			}
-
-			//M17 settings
-			else if(*disp_state==DISP_M17_SETTINGS)
-			{
-				if(item==0)
-					*edit_set=EDIT_M17_SRC_CALLSIGN;
-				else if(item==1)
-					*edit_set=EDIT_M17_DST_CALLSIGN;
-				else if(item==2)
-					*edit_set=EDIT_M17_CAN;
-
-				//all menu entries are editable
-				*disp_state = next_disp;
-				showTextValueEntry(buff, *text_mode);
-			}
-
-			//text message entry - send message
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				//initialize packet transmission
-				if(*radio_state==RF_RX)
-				{
-					initTextTX(text_entry);
-				}
-			}
-
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				if(*edit_set==EDIT_RF_PPM)
-				{
-					float val = atof(text_entry);
-					if(fabsf(val)<=50.0f)
-					{
-						dev_settings->freq_corr = val;
-						//TODO: fix how the frequency correction is applied for TX
-						if(radio_state==RF_RX)
-						{
-							setFreqRF(dev_settings->channel.rx_frequency, dev_settings->freq_corr);
-						}
-						/*else //i believe this is an impossible case
-						{
-							setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
-						}*/
-					}
-				}
-				else if(*edit_set==EDIT_RF_PWR)
-				{
-					float val = atof(text_entry);
-					if(val>1.0f)
-					{
-						dev_settings->channel.rf_pwr=RF_PWR_HIGH; //2W output power
-						HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
-					}
-					else
-					{
-						dev_settings->channel.rf_pwr=RF_PWR_LOW; //0.5W output power
-						HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
-					}
-				}
-				else if(*edit_set==EDIT_M17_SRC_CALLSIGN)
-				{
-					memset(dev_settings->src_callsign, 0, sizeof(dev_settings->src_callsign));
-					strcpy(dev_settings->src_callsign, text_entry);
-				}
-				else if(*edit_set==EDIT_M17_DST_CALLSIGN)
-				{
-					memset(dev_settings->channel.dst, 0, sizeof(dev_settings->channel.dst));
-					strcpy(dev_settings->channel.dst, text_entry);
-				}
-				else if(*edit_set==EDIT_M17_CAN)
-				{
-					uint8_t val = atoi(text_entry);
-					if(val<16)
-						dev_settings->channel.can = val;
-				}
-
-				*edit_set = EDIT_NONE;
-				saveData(dev_settings, MEM_START, sizeof(dev_settings_t));
-
-				*disp_state = DISP_MAIN_SCR;
-				showMainScreen(buff);
-			}
-
-			//debug menu
-			else if(*disp_state==DISP_DEBUG)
-			{
-				if(item==0)
-				{
-					debug_tx ^= 1;
-					//initialize dummy transmission
-					if(*radio_state==RF_RX && debug_tx)
-					{
-						;//initDebugTX();
-					}
-				}
-			}
-
-			//settings or info
-			else /*if(*disp_state==DISP_SETTINGS || \
-					*disp_state==DISP_INFO)*/
-			{
-				if(next_disp!=DISP_NONE)
-				{
-					*disp_state = next_disp;
-					showMenu(buff, displays[*disp_state], 0, 0);
-				}
-			}
-
-			//
-			/*else
-			{
-				;
-			}*/
-
-			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
-		break;
-
-		case KEY_C:
-			menu_pos=menu_pos_hl=0;
-			next_disp = displays[*disp_state].prev_disp;
-
-			//dbg_print("[Debug] Start disp_state: %d\n", *disp_state);
-
-			//main screen
-			if(*disp_state==DISP_MAIN_SCR)
-			{
-				; //nothing
-			}
-
-			//main menu
-			else if(*disp_state==DISP_MAIN_MENU)
-			{
-				*disp_state = next_disp;
-				showMainScreen(buff);
-		    }
-
-			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				//backspace
-				if(strlen(text_entry)>0)
-				{
-					memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
-					pos=strlen(text_entry);
-					memset((char*)code, 0, strlen((char*)code));
-
-					drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-					setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-				}
-				else
-				{
-					*disp_state = next_disp;
-					showMenu(buff, displays[*disp_state], 0, 0);
-				}
-			}
-
-			//text value entry
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				//backspace
-				if(strlen(text_entry)>0)
-				{
-					memset(&text_entry[strlen(text_entry)-1], 0, sizeof(text_entry)-strlen(text_entry));
-					pos=strlen(text_entry);
-					memset((char*)code, 0, strlen((char*)code));
-
-					drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-					setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-				}
-				else
-				{
-					*disp_state = next_disp;
-					showMainScreen(buff);
-				}
-			}
-
-			//anything else
-			else
-			{
-				*disp_state = displays[*disp_state].prev_disp;
-				showMenu(buff, displays[*disp_state], 0, 0);
-			}
-
-			//dbg_print("[Debug] End disp_state: %d\n", *disp_state);
-		break;
-
-		case KEY_LEFT:
-			//main screen
-			if(*disp_state==DISP_MAIN_SCR)
-			{
-				if(dev_settings->tuning_mode==TUNING_VFO)
-				{
-					dev_settings->channel.tx_frequency -= 12500;
-					setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
-
-					char str[24];
-					sprintf(str, "T %ld.%04ld",
-							dev_settings->channel.tx_frequency/1000000,
-							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
-					drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
-					setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
-				}
-				else// if(dev_settings->tuning_mode==TUNING_MEM)
-				{
-					;
-				}
-			}
-
-			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				; //nothing yet
-			}
-
-			//other menus
-			else if(*disp_state!=DISP_TEXT_VALUE_ENTRY)
-			{
-				if(menu_pos_hl==3 || menu_pos_hl==displays[*disp_state].num_items-1)
-				{
-					if(menu_pos+3<displays[*disp_state].num_items-1)
-						menu_pos++;
-					else //wrap around
-					{
-						menu_pos=0;
-						menu_pos_hl=0;
-					}
-				}
-				else
-				{
-					if(menu_pos_hl<3 && menu_pos+menu_pos_hl<displays[*disp_state].num_items-1)
-						menu_pos_hl++;
-				}
-
-				//no state change
-				showMenu(buff, displays[*disp_state], menu_pos, menu_pos_hl);
-			}
-
-			else
-			{
-				;
-			}
-		break;
-
-		case KEY_RIGHT:
-			//main screen
-			if(*disp_state==DISP_MAIN_SCR)
-			{
-				if(dev_settings->tuning_mode==TUNING_VFO)
-				{
-					dev_settings->channel.tx_frequency += 12500;
-					setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
-
-					char str[24];
-					sprintf(str, "T %ld.%04ld",
-							dev_settings->channel.tx_frequency/1000000,
-							(dev_settings->channel.tx_frequency - (dev_settings->channel.tx_frequency/1000000)*1000000)/100);
-					drawRect(buff, 0, 36, RES_X-1, 36+8, 1, 1);
-					setString(buff, 0, 36, &nokia_small, str, 0, ALIGN_CENTER);
-				}
-				else// if(dev_settings->tuning_mode==TUNING_MEM)
-				{
-					;
-				}
-			}
-
-			//text message entry
-			else if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				pos=strlen(text_entry);
-				memset((char*)code, 0, strlen((char*)code));
-				HAL_TIM_Base_Stop(&htim7);
-				TIM7->CNT=0;
-			}
-
-			//other menus
-			else
-			{
-				if(menu_pos_hl==0)
-				{
-					if(menu_pos>0)
-						menu_pos--;
-					else //wrap around
-					{
-						if(displays[*disp_state].num_items>3)
-						{
-							menu_pos=displays[*disp_state].num_items-1-3;
-							menu_pos_hl=3;
-						}
-						else
-						{
-							menu_pos=0;
-							menu_pos_hl=displays[*disp_state].num_items-1;
-						}
-					}
-				}
-				else
-				{
-					if(menu_pos_hl>0)
-						menu_pos_hl--;
-				}
-
-				//no state change
-				showMenu(buff, displays[*disp_state], menu_pos, menu_pos_hl);
-			}
-
-			//else
-			/*{
-				;
-			}*/
-		break;
-
-		case KEY_1:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_2:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_3:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_4:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_5:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_6:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_7:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_8:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_9:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_ASTERISK:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_0:
-			if(*text_mode==TEXT_LOWERCASE)
-			{
-				pushCharBuffer(key_map_lc, key);
-			}
-			else if (*text_mode==TEXT_UPPERCASE)
-			{
-				pushCharBuffer(key_map_uc, key);
-			}
-			else //(*text_mode==TEXT_T9)
-			{
-				pushCharT9(key);
-			}
-
-			if(*disp_state==DISP_TEXT_MSG_ENTRY)
-			{
-				drawRect(buff, 0, 10, RES_X-1, RES_Y-9, 1, 1);
-				setString(buff, 0, 10, &nokia_small, text_entry, 0, ALIGN_LEFT);
-			}
-			else if(*disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				drawRect(buff, 1, 10, RES_X-2, RES_Y-12, 1, 1);
-				setString(buff, 3, 13, &nokia_big, text_entry, 0, ALIGN_ARB);
-			}
-		break;
-
-		case KEY_HASH:
-			if(*disp_state==DISP_TEXT_MSG_ENTRY || *disp_state==DISP_TEXT_VALUE_ENTRY)
-			{
-				if(*text_mode==TEXT_LOWERCASE)
-					*text_mode = TEXT_UPPERCASE;
-				else if(*text_mode==TEXT_UPPERCASE)
-					*text_mode = TEXT_T9;
-				else
-					*text_mode = TEXT_LOWERCASE;
-
-				drawRect(buff, 0, 0, 15, 8, 1, 1);
-
-				if(*text_mode==TEXT_LOWERCASE)
-					setString(buff, 0, 0, &nokia_small, (char*)"abc", 0, ALIGN_LEFT);
-				else if(*text_mode==TEXT_UPPERCASE)
-					setString(buff, 0, 0, &nokia_small, (char*)"ABC", 0, ALIGN_LEFT);
-				else
-					setString(buff, 0, 0, &nokia_small, (char*)"T9", 0, ALIGN_LEFT);
-			}
-		break;
-
-		default:
-			;
-		break;
-	}
-}
-
-//set keyboard insensitivity timer
-void setKeysTimeout(const uint16_t delay)
-{
-	TIM7->ARR=delay*10-1;
-}
-
-//RF module
-uint8_t setRegRF(uint8_t reg, uint16_t val)
-{
-	char data[20], rcv[5]={0};
-	uint8_t len;
-
-	len = sprintf(data, "AT+POKE=%d,%d\r\n", reg, val);
-	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
-	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 4, 50);
-
-	//dbg_print("[RF module] POKE %02X %04X reply: %s\n", reg, val, rcv);
-
-	if(strcmp(rcv, "OK\r\n")==0)
-		return 0;
-	return 1;
-}
-
-uint16_t getRegRF(uint8_t reg)
-{
-	char data[64], rcv[64]={0};
-	uint8_t len;
-
-	len = sprintf(data, "AT+PEEK=%d\r\n", reg);
-	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
-	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 64, 10);
-
-	//dbg_print("[RF module] PEEK %02X reply: %s\n", reg, rcv);
-
-	return atoi(rcv);
-}
-
-void maskSetRegRF(uint8_t reg, uint16_t mask, uint16_t value)
-{
-	uint16_t regVal = getRegRF(reg);
-	regVal = (regVal & ~mask) | (value & mask);
-	setRegRF(reg, regVal);
-}
-
-void reloadRF(void)
-{
-	uint16_t funcMode = getRegRF(0x30) & 0x0060; //Get current op. status
-	maskSetRegRF(0x30, 0x0060, 0x0000); //RX and TX off
-	maskSetRegRF(0x30, 0x0060, funcMode); //Restore op. status
-}
-
-void setFreqRF(uint32_t freq, float corr)
-{
-	freq = (float)freq * (1.0f + corr/1e6);
-
-	uint32_t val = (freq / 1000.0f) * 16.0f;
-	uint16_t fHi = (val >> 16) & 0xFFFF;
-	uint16_t fLo = val & 0xFFFF;
-
-	setRegRF(0x29, fHi);
-	setRegRF(0x2A, fLo);
-
-	reloadRF();
-}
-
-void setRF(radio_state_t state)
-{
-	//0 for rx, 1 for tx
-	maskSetRegRF(0x30, 0x0060, (state+1)<<5);
-}
-
-void chBwRF(ch_bw_t bw)
-{
-	if(bw==RF_BW_12K5)
-	{
-		setRegRF(0x15, 0x1100);
-		setRegRF(0x32, 0x4495);
-		setRegRF(0x3A, 0x40C3);
-		setRegRF(0x3F, 0x29D1);
-		setRegRF(0x3C, 0x1B34);
-		setRegRF(0x48, 0x19B1);
-		setRegRF(0x60, 0x0F17);
-		setRegRF(0x62, 0x1425);
-		setRegRF(0x65, 0x2494);
-		setRegRF(0x66, 0xEB2E);
-		setRegRF(0x7F, 0x0001);
-		setRegRF(0x06, 0x0014);
-		setRegRF(0x07, 0x020C);
-		setRegRF(0x08, 0x0214);
-		setRegRF(0x09, 0x030C);
-		setRegRF(0x0A, 0x0314);
-		setRegRF(0x0B, 0x0324);
-		setRegRF(0x0C, 0x0344);
-		setRegRF(0x0D, 0x1344);
-		setRegRF(0x0E, 0x1B44);
-		setRegRF(0x0F, 0x3F44);
-		setRegRF(0x12, 0xE0EB);
-		setRegRF(0x7F, 0x0000);
-
-		maskSetRegRF(0x30, 0x3000, 0x0000);
-	}
-	else
-	{
-		setRegRF(0x15, 0x1F00);
-		setRegRF(0x32, 0x7564);
-		setRegRF(0x3A, 0x40C3);
-		setRegRF(0x3C, 0x1B34);
-		setRegRF(0x3F, 0x29D1);
-		setRegRF(0x48, 0x1F3C);
-		setRegRF(0x60, 0x0F17);
-		setRegRF(0x62, 0x3263);
-		setRegRF(0x65, 0x248A);
-		setRegRF(0x66, 0xFFAE);
-		setRegRF(0x7F, 0x0001);
-		setRegRF(0x06, 0x0024);
-		setRegRF(0x07, 0x0214);
-		setRegRF(0x08, 0x0224);
-		setRegRF(0x09, 0x0314);
-		setRegRF(0x0A, 0x0324);
-		setRegRF(0x0B, 0x0344);
-		setRegRF(0x0C, 0x0384);
-		setRegRF(0x0D, 0x1384);
-		setRegRF(0x0E, 0x1B84);
-		setRegRF(0x0F, 0x3F84);
-		setRegRF(0x12, 0xE0EB);
-		setRegRF(0x7F, 0x0000);
-
-		maskSetRegRF(0x30, 0x3000, 0x3000);
-	}
-
-	reloadRF(); //reload
-}
-
-void setModeRF(rf_mode_t mode)
-{
-	if(mode==RF_MODE_4FSK)
-	{
-		setRegRF(0x3A, 0x00C2);
-		setRegRF(0x33, 0x45F5);
-		setRegRF(0x41, 0x4731);
-		setRegRF(0x42, 0x1036);
-		setRegRF(0x43, 0x00BB);
-		setRegRF(0x58, 0xBCFD);	//Bit 0  = 1: CTCSS LPF bandwidth to 250Hz
-								//Bit 3  = 1: bypass CTCSS HPF
-								//Bit 4  = 1: bypass CTCSS LPF
-								//Bit 5  = 1: bypass voice LPF
-								//Bit 6  = 1: bypass voice HPF
-								//Bit 7  = 1: bypass pre/de-emphasis
-								//Bit 11 = 1: bypass VOX HPF
-								//Bit 12 = 1: bypass VOX LPF
-								//Bit 13 = 1: bypass RSSI LPF
-		setRegRF(0x44, 0x06CC);
-		setRegRF(0x40, 0x0031);
-	}
-	else
-	{
-		;
-	}
-
-	reloadRF(); //reload
-}
-
-void initRF(ch_settings_t ch_settings)
-{
-	uint32_t freq = ch_settings.rx_frequency;
-	float freq_corr = dev_settings.freq_corr;
-	ch_bw_t bw = ch_settings.ch_bw;
-	rf_mode_t mode = ch_settings.mode;
-	rf_power_t pwr = ch_settings.rf_pwr;
-
-	uint8_t data[64]={0};
-
-	//PTT off
-	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
-
-	//RF power
-	if(pwr==RF_PWR_LOW)
-		HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
-	else
-		HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
-
-	//turn on the module
-	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 1);
-	HAL_Delay(100);
-
-	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 20);
-	HAL_UART_Receive(&huart4, data, 64, 50); //naїve, blocking
-
-	//display the received data
-	uint8_t len=strlen((char*)data);
-	if(len)
-	{
-		data[strlen((char*)data)-2]=0;
-		dbg_print("[RF module] Version: %s\n", data);
-	}
-	else
-		dbg_print("[RF module] Nothing received\n");
-
-	//SA868S (AT1846S) init sequence (thx, edgetriggered)
-	dbg_print("[RF module] Init sequence start\n");
-
-	setRegRF(0x30, 0x0001);	//Soft reset
-	HAL_Delay(160);
-
-	setRegRF(0x30, 0x0004);	//Set pdn_reg (power down pin);
-
-	setRegRF(0x04, 0x0FD0);	//Set clk_mode to 25.6MHz/26MHz
-	setRegRF(0x0A, 0x7C20);	//Set 0x0A to its default value
-	setRegRF(0x13, 0xA100);
-	setRegRF(0x1F, 0x1001);	//Set gpio0 to ctcss_out/css_int/css_cmp
-							//and gpio6 to sq, sq&ctcss/cdcss when sq_out_set=1
-	setRegRF(0x31, 0x0031);
-	setRegRF(0x33, 0x44A5);
-	setRegRF(0x34, 0x2B89);
-	setRegRF(0x41, 0x4122);	//Set voice_gain_tx (voice digital gain); to 0x22
-	setRegRF(0x42, 0x1052);
-	setRegRF(0x43, 0x0100);
-	setRegRF(0x44, 0x07FF);	//Set gain_tx (voice digital gain after tx ADC downsample); to 0x7
-	setRegRF(0x59, (68<<6) | 0x10);	//Set c_dev (CTCSS/CDCSS TX FM deviation); to 0x10
-									//and xmitter_dev (voice/subaudio TX FM deviation); to 0x2E
-									//original value: 0x0B90 = (0x2E<<6) | 0x10
-									//xmitter_dev=68 gives good M17 deviation
-	setRegRF(0x47, 0x7F2F);
-	setRegRF(0x4F, 0x2C62);
-	setRegRF(0x53, 0x0094);
-	setRegRF(0x54, 0x2A3C);
-	setRegRF(0x55, 0x0081);
-	setRegRF(0x56, 0x0B02);
-	setRegRF(0x57, 0x1C00);
-	setRegRF(0x58, 0x9CDD);	//Bit 0  = 1: CTCSS LPF bandwidth to 250Hz
-							//Bit 3  = 1: bypass CTCSS HPF
-							//Bit 4  = 1: bypass CTCSS LPF
-							//Bit 5  = 0: enable voice LPF
-							//Bit 6  = 1: bypass voice HPF
-							//Bit 7  = 1: bypass pre/de-emphasis
-							//Bit 11 = 1: bypass VOX HPF
-							//Bit 12 = 1: bypass VOX LPF
-							//Bit 13 = 0: normal RSSI LPF bandwidth
-	setRegRF(0x5A, 0x06DB);
-	setRegRF(0x63, 0x16AD);
-	setRegRF(0x67, 0x0628);	//Set DTMF C0 697Hz to ???
-	setRegRF(0x68, 0x05E5);	//Set DTMF C1 770Hz to 13MHz and 26MHz
-	setRegRF(0x69, 0x0555);	//Set DTMF C2 852Hz to ???
-	setRegRF(0x6A, 0x04B8);	//Set DTMF C3 941Hz to ???
-	setRegRF(0x6B, 0x02FE);	//Set DTMF C4 1209Hz to 13MHz and 26MHz
-	setRegRF(0x6C, 0x01DD);	//Set DTMF C5 1336Hz
-	setRegRF(0x6D, 0x00B1);	//Set DTMF C6 1477Hz
-	setRegRF(0x6E, 0x0F82);	//Set DTMF C7 1633Hz
-	setRegRF(0x6F, 0x017A);	//Set DTMF C0 2nd harmonic
-	setRegRF(0x70, 0x004C);	//Set DTMF C1 2nd harmonic
-	setRegRF(0x71, 0x0F1D);	//Set DTMF C2 2nd harmonic
-	setRegRF(0x72, 0x0D91);	//Set DTMF C3 2nd harmonic
-	setRegRF(0x73, 0x0A3E);	//Set DTMF C4 2nd harmonic
-	setRegRF(0x74, 0x090F);	//Set DTMF C5 2nd harmonic
-	setRegRF(0x75, 0x0833);	//Set DTMF C6 2nd harmonic
-	setRegRF(0x76, 0x0806);	//Set DTMF C7 2nd harmonic
-
-	setRegRF(0x30, 0x40A4);	//Set pdn_pin (power down enable);
-							//and set rx_on
-							//and set mute when rxno
-							//and set xtal_mode to 26MHz/13MHz
-	HAL_Delay(160);
-
-	setRegRF(0x30, 0x40A6);	//Start calibration
-	HAL_Delay(160);
-	setRegRF(0x30, 0x4006);	//Stop calibration
-	HAL_Delay(160);
-
-	setRegRF(0x40, 0x0031);
-
-	//set mode
-	dbg_print("[RF module] Setting mode to %s\n", (mode==RF_MODE_4FSK)?"M17":"FM");
-	setModeRF(mode);
-
-	//set bandwidth
-	dbg_print("[RF module] Setting bandwidth to %skHz\n", (bw==RF_BW_12K5)?"12.5":"25");
-	chBwRF(bw);
-
-	//some additional registers
-	setRegRF(0x41, 0x0070); //VOX threshold? was 0x0070
-	setRegRF(0x44, 0x00FF); //"RX voice volume", was 0x0022
-
-	//set frequency
-	dbg_print("[RF module] Setting frequency to %ldHz (%+d.%dppm)\n",
-			freq, (int8_t)freq_corr, (uint8_t)fabsf(10*freq_corr) - (int8_t)fabsf((int8_t)freq_corr*10.0f));
-	setFreqRF(freq, freq_corr);
-}
-
-void shutdownRF(void)
-{
-	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
-	dbg_print("[RF module] Shutdown\n");
-}
-
-//memory
-uint8_t eraseSector(void)
-{
-	if(HAL_FLASH_Unlock()==HAL_OK)
-	{
-		FLASH_EraseInitTypeDef erase =
-		{
-			FLASH_TYPEERASE_SECTORS,	//erase sectors
-			FLASH_BANK_1,				//bank 1 (the only available, i guess)
-			FLASH_SECTOR_11,			//start at sector 11 (last)
-			1,							//1 sector to erase
-			FLASH_VOLTAGE_RANGE_3,		//2.7 to 3.6V
-		};
-		uint32_t sector_error=0;
-
-		HAL_StatusTypeDef ret = HAL_FLASHEx_Erase(&erase, &sector_error);
-
-		if(ret==HAL_OK && sector_error==0xFFFFFFFFU) //successful erase
-		{
-			dbg_print("[NVMEM] Sector erased.\n");
-			HAL_FLASH_Lock();
-
-			return 0;
-		}
-
-		dbg_print("[NVMEM] Sector erasure error.\n");
-
-		return 1;
-	}
-
-	dbg_print("[NVMEM] Error unlocking Flash memory.\n");
-
-	return 1;
-}
-
-uint8_t saveData(const void *data, const uint32_t addr, const uint16_t size)
-{
-	if(eraseSector()==0) //erase ok
-	{
-		if(HAL_FLASH_Unlock()==HAL_OK) //unlock ok
-		{
-			for(uint16_t i=0; i<size; i++)
-				HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr+i, *(((uint8_t*)data)+i));
-
-			HAL_FLASH_Lock();
-
-			dbg_print("[NVMEM] Data saved.\n");
-
-			return 0;
-		}
-
-		dbg_print("[NVMEM] Error unlocking Flash memory.\n");
-
-		return 1;
-	}
-
-	dbg_print("[NVMEM] Sector erasure error.\n");
-
-	return 1;
-}
-
-//device settings
-void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings)
-{
-	//if the memory is uninitialized
-	if(*((uint32_t*)MEM_START)==0xFFFFFFFFU)
-	{
-		memcpy((uint8_t*)dev_settings, (uint8_t*)def_dev_settings, sizeof(dev_settings_t));
-		uint8_t ret = saveData(def_dev_settings, MEM_START, sizeof(dev_settings_t));
-
-		if(ret==0)
-			dbg_print("[NVMEM] Default device settings loaded.\n");
-		else
-			dbg_print("[NVMEM] Error saving default device settings.\n");
-	}
-
-	//if settings are available in the memory
-	else
-	{
-		memcpy((uint8_t*)dev_settings, (uint8_t*)MEM_START, sizeof(dev_settings_t));
-
-		dbg_print("[NVMEM] Device settings loaded.\n");
-	}
-
-	//load settings into menus
-	//frequency correction
-	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm", //TODO: there is some problem with negative values here
-			(int8_t)(dev_settings->freq_corr), (uint8_t)fabsf(10*dev_settings->freq_corr) - (int8_t)fabsf((int8_t)(dev_settings->freq_corr)*10.0f)
-	);
-
-	//RF power
-	if(dev_settings->channel.rf_pwr==RF_PWR_HIGH)
-		sprintf(displays[DISP_RADIO_SETTINGS].value[1], "2W");
-	else
-		sprintf(displays[DISP_RADIO_SETTINGS].value[1], "0.5W");
-
-	//SRC callsign
-	strcpy(displays[DISP_M17_SETTINGS].value[0], dev_settings->src_callsign);
-
-	//destination
-	strcpy(displays[DISP_M17_SETTINGS].value[1], dev_settings->channel.dst);
-
-	//CAN
-	sprintf(displays[DISP_M17_SETTINGS].value[2], "%d", dev_settings->channel.can);
-
-	//backlight timeout
-	sprintf(displays[DISP_DISPLAY_SETTINGS].value[1], "%ds", dev_settings->backlight_timer);
-}
-
-//USB control
-void parseUSB(uint8_t *str, uint32_t len)
-{
-	//backlight timeout
-	//"blt=VALUE"
-	if(strstr((char*)str, "blt")==(char*)str)
-	{
-		dev_settings.backlight_timer=atoi(strstr((char*)str, "=")+1);
-		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
-		htim14.Init.Prescaler = dev_settings.backlight_timer*2000; //1s is 2000
-		HAL_TIM_Base_Init(&htim14);
-	}
-
-	//display backlight
-	//"bl=VALUE"
-	else if(strstr((char*)str, "bl")==(char*)str)
-	{
-		setBacklight(atoi(strstr((char*)str, "=")+1));
-	}
-
-	//set frequency
-	//"freq=VALUE"
-	else if(strstr((char*)str, "freq")==(char*)str)
-	{
-		setFreqRF(atoi(strstr((char*)str, "=")+1), dev_settings.freq_corr);
-	}
-
-	//read byte from the Flash memory
-	//"peek=ADDRESS"
-	else if(strstr((char*)str, "peek")==(char*)str)
-	{
-		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
-		dbg_print("%08lX -> 0x%02X\n", addr, *((uint8_t*)addr));
-	}
-
-	//write byte to the Flash memory (use with caution)
-	//"poke=ADDRESS val=VALUE"
-	else if(strstr((char*)str, "poke")==(char*)str)
-	{
-		uint32_t addr = MEM_START + atoi(strstr((char*)str, "=")+1);
-		uint8_t val = atoi(strstr((char*)str, "val=")+4);
-
-		HAL_FLASH_Unlock();
-		HAL_FLASH_Program(FLASH_TYPEPROGRAM_BYTE, addr, (uint64_t)val);
-		HAL_FLASH_Lock();
-
-		dbg_print("%08lX <- 0x%02X\n", addr, val);
-	}
-
-	//load settings from nvmem
-	//"load"
-	else if(strstr((char*)str, "load")==(char*)str)
-	{
-		loadDeviceSettings(&dev_settings, &def_dev_settings);
-	}
-
-	//erase Flash memory sector
-	//"erase"
-	else if(strstr((char*)str, "erase")==(char*)str)
-	{
-		eraseSector();
-	}
-
-	//set SRC callsign
-	//"src_call=STRING"
-	else if(strstr((char*)str, "src_call")==(char*)str)
-	{
-		strcpy(dev_settings.src_callsign, strstr((char*)str, "=")+1);
-		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
-	}
-
-	//set frequency correction
-	//"freq_corr=VALUE"
-	else if(strstr((char*)str, "f_corr")==(char*)str)
-	{
-		dev_settings.freq_corr = atof(strstr((char*)str, "=")+1);
-		saveData(&dev_settings, MEM_START, sizeof(dev_settings_t));
-	}
-
-	//send text message
-	//"msg=STRING"
-	else if(strstr((char*)str, "msg")==(char*)str)
-	{
-		strcpy(text_entry, strstr((char*)str, "=")+1);
-		initTextTX(text_entry);
-	}
-
-	//get LSF META field
-	else if(strstr((char*)str, "meta")==(char*)str)
-	{
-		dbg_print("[Settings] META=");
-		for(uint8_t i=0; i<sizeof(lsf_tx.meta); i++)
-			dbg_print("%02X", lsf_tx.meta[i]);
-		dbg_print(" REF=%s\n", dev_settings.refl_name);
-	}
-
-	//simple echo
-	//CDC_Transmit_FS(str, len);
+	//TODO: RF PTT line should work
+	//HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 0);
+
+	// ...then do this
+	HAL_Delay(10000);
+
+	// cleanup
+    radio_state = RF_RX;
+    setRF(radio_state);
+    //TODO: RF PTT line should work
+    //HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
+
+    chBwRF(RF_BW_25K);
+
+    HAL_ADC_Stop_DMA(&hadc1);
+    raw_bsb_buff_tail = 0;
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&raw_bsb_buff, arrlen(raw_bsb_buff));
+    HAL_TIM_Base_Start(&htim8);
 }
 /* USER CODE END 0 */
 
@@ -2337,257 +289,339 @@ int main(void)
   MX_TIM6_Init();
   MX_TIM14_Init();
   MX_TIM8_Init();
+  MX_ADC2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
   #if (__FPU_PRESENT == 1) && (__FPU_USED == 1)
   SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
   #endif
 
   //set baseband DAC to idle
-  frame_samples[0][0]=DAC_IDLE;
-  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)frame_samples, 1, DAC_ALIGN_12B_R);
-  HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out)
+  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
+  HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
+  HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out) timer for later DMA transfers
+
+  //start ADC sampling
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
+  HAL_ADC_Start_DMA(&hadc2, (uint32_t*)&batt_adc, 1);
+  HAL_TIM_Base_Start(&htim3); // 5Hz for battery voltage sampling
+  HAL_TIM_Base_Start(&htim8); // 24kHz - ADC (baseband in)
 
   HAL_Delay(200);
 
   //init display
-  dispInit();
-  dispClear(disp_buff, 0);
+  disp_dev = (disp_dev_t){&hspi1, disp_buff};
+  dispInit(&disp_dev);
+  dispClear(&disp_dev, 0);
   setBacklight(0);
 
   //load settings from NVMEM
   loadDeviceSettings(&dev_settings, &def_dev_settings);
 
-  //turn on backlight if required
-  if(dev_settings.backlight_always==1)
-  {
-	  setBacklight(dev_settings.backlight_level);
-  }
-  else
-  {
-	  //update PSC value
-	  htim14.Init.Prescaler = dev_settings.backlight_timer*2000; //1s is 2000
-	  HAL_TIM_Base_Init(&htim14);
-  }
-
   //display splash screen
   curr_disp_state = DISP_SPLASH;
-  dispSplash(disp_buff, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
+  dispSplash(&disp_dev, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
+
+  //turn on backlight if required
+  setBacklight(dev_settings.backlight_level);
+  if(!dev_settings.backlight_always)
+  {
+	  //enable backlight timeout
+	  setBacklightTimer(dev_settings.backlight_timer);
+	  startBacklightTimer();
+  }
 
   //init SA868S RF module
   radio_state = RF_RX;
-  initRF(dev_settings.channel);
+  initRF(dev_settings);
   setRF(radio_state);
-
-  //init ring buffer
-  initRing(&raw_bsb_ring, raw_bsb_buff, arrlen(raw_bsb_buff));
-
-  //start ADC sampling
   chBwRF(RF_BW_25K); //TODO: get rid of this workaround
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
-  HAL_TIM_Base_Start(&htim8); //24kHz - ADC (baseband in, batt. voltage sense)
 
+  //fill LSF
   set_LSF(&lsf_tx, dev_settings.src_callsign, dev_settings.channel.dst,
 		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
+
+  //keypad timeout
   setKeysTimeout(dev_settings.kbd_timeout);
 
   //play beep if required
-  /*if(dev_settings.beep_on_start==1)
+  /*if (dev_settings.beep_on_start == 1)
   {
-  	  playBeep(50);
+	  playBeep(1000, 50);
   }*/
 
   //menu init
   curr_disp_state = DISP_MAIN_SCR;
-  showMainScreen(disp_buff);
+  showMainScreen(&disp_dev);
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  //superloop rotation counter
-	  r++;
+	  //current tick
+	  t_now = HAL_GetTick();
 
 	  //handle key presses
-	  handleKey(disp_buff, &curr_disp_state, &text_mode, &radio_state,
-			  &dev_settings, scanKeys(dev_settings.kbd_delay), &edit_set);
+	  handleKey(&disp_dev, &curr_disp_state, &text_entry, &radio_state,
+			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
 
 	  //refresh main screen data
-	  if(r%100==0 && curr_disp_state==DISP_MAIN_SCR)
+	  if(t_now-t_last>=1000 && curr_disp_state==DISP_MAIN_SCR)
 	  {
 		  //clear the upper right portion of the screen
-		  drawRect(disp_buff, RES_X-1-15, 0, RES_X-1, 8, 1, 1);
+		  drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, COL_WHITE, 1);
 
 		  //is the battery charging? (read /CHG signal)
 		  if(!(CHG_GPIO_Port->IDR & CHG_Pin))
 		  {
-			  setString(disp_buff, RES_X-1, 0, &nokia_small, "B+", 0, ALIGN_RIGHT);
+			  setString(&disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT);
 		  }
 		  else
 		  {
 			  char u_batt_str[8];
-			  uint16_t u_batt=getBattVoltage();
+			  uint16_t u_batt = getBattVoltage();
 			  if(u_batt>3500)
 				  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
 			  else
 				  sprintf(u_batt_str, "Lo");
-			  setString(disp_buff, RES_X-1, 0, &nokia_small, u_batt_str, 0, ALIGN_RIGHT);
+			  setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT);
 		  }
+
+		  t_last = HAL_GetTick();
 	  }
 
 	  //packet transfer triggered - start transmission
-	  if(frame_pend)
+	  if (frame_pend)
 	  {
-		  //this is a workaround for the module's initial frequency wobble after RX->TX transition
-		  const uint8_t warmup = 25; //each frame is 40ms, therefore this is 1s of a solid preamble
+	      const uint8_t warmup = 25;
+	      uint8_t N = (packet_bytes + 24) / 25;
 
-		  if(frame_cnt==0)
-		  {
-			  dispClear(disp_buff, 0);
-			  setString(disp_buff, 0, 17, &nokia_big, "Sending...", 0, ALIGN_CENTER);
+	      if (frame_cnt == 0)
+	      {
+	          // first preamble frame (start DMA)
+	          dispClear(&disp_dev, 0);
+	          setString(&disp_dev, 0, 17, &nokia_big, "Sending...", COL_BLACK, ALIGN_CENTER);
 
-			  chBwRF(dev_settings.channel.ch_bw); //TODO: get rid of this workaround
+	          chBwRF(dev_settings.channel.ch_bw);
 
-			  //preamble
-			  uint32_t cnt=0;
-			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-			  filter_symbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
+	          uint32_t cnt = 0;
+	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
+	          fltSymbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
 
-			  HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)&frame_samples[0][0], SYM_PER_FRA*10, DAC_ALIGN_12B_R);
-		  }
-		  else if(frame_cnt<warmup)
-		  {
-			  //more preamble :D
-			  uint32_t cnt=0;
-			  gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-		  }
-		  else if(frame_cnt==warmup)
-		  {
-			  //LSF with sample META field
-			  /*encode_callsign_bytes(&lsf.meta[0], (uint8_t*)dev_settings.refl_name);
-			  //encode_callsign_bytes(&lsf.meta[6], (uint8_t*)"");
-			  update_LSF_CRC(&lsf);*/
-			  gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
-			  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-		  }
-		  else
-		  {
-			  //last frame
-			  if((payload[25]&0x80)==0)
-			  {
-				  uint16_t bytes_left=packet_bytes-(frame_cnt-warmup-1)*25;
+	          HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t *)&frame_samples[0][0],
+	                            2*SYM_PER_FRA*10, DAC_ALIGN_12B_R);
+	      }
+	      else if (frame_cnt < warmup)
+	      {
+	          // remaining preamble frames
+	          uint32_t cnt = 0;
+	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else if (frame_cnt == warmup)
+	      {
+	          // LSF frame
+	          gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else if (frame_cnt <= warmup + N)
+	      {
+	          // PKT frames (1..N)
+	          uint8_t index = frame_cnt - warmup - 1;
 
-				  memcpy(payload, &packet_payload[(frame_cnt-warmup-1)*25], 25);
-				  if(bytes_left>25)
-					  payload[25] = (frame_cnt-warmup-1)<<2;
-				  else
-					  payload[25] = 0x80 | ((bytes_left)<<2);
+	          uint16_t off = index * 25;
+	          uint16_t remaining = packet_bytes - off;
 
-				  gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
-				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-			  }
+	          memcpy(payload, &packet_payload[off], 25);
+	          if (remaining > 25)
+	              payload[25] = index << 2;
+	          else
+	              payload[25] = 0x80 | (remaining << 2);
 
-			  //or EOT
-			  else
-			  {
-				  uint32_t cnt=0;
-				  gen_eot_i8(frame_symbols, &cnt);
-				  filter_symbols(&frame_samples[frame_cnt%2][0], frame_symbols, rrc_taps_10, 0);
-			  }
-		  }
+	          gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else if (frame_cnt == warmup + N + 1)
+	      {
+	          // EOT frame
+	          uint32_t cnt = 0;
+	          gen_eot_i8(frame_symbols, &cnt);
+	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	      }
+	      else
+	      {
+	          // DONE — cleanup
+	          radio_state = RF_RX;
+	          setRF(radio_state);
+	          //TODO: RF PTT line should work
+	          //HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
 
-		  if(frame_cnt<warmup+(1+packet_bytes/25+1))
-		  {
-			  frame_cnt++;
-		  }
-		  else
-		  {
-			  //transmission end, back to RX and main display
-			  radio_state=RF_RX;
-			  setRF(radio_state);
-			  HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-			  frame_cnt=0;
+	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
+	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
 
-			  curr_disp_state = DISP_MAIN_SCR;
-			  showMainScreen(disp_buff);
+	          frame_cnt = 0;
+	          curr_disp_state = DISP_MAIN_SCR;
+	          showMainScreen(&disp_dev);
 
-			  chBwRF(RF_BW_25K); //TODO: get rid of this workaround
-			  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_vals, 2);
-			  HAL_TIM_Base_Start(&htim8); //start 24kHz ADC sample clock
-		  }
+	          text_entry.buffer[0] = 0;
+	          text_entry.pos = 0;
+	          // keep the current text entry mode
 
-		  frame_pend=0;
+	          chBwRF(RF_BW_25K); // TODO: this is a workaround
+
+	          HAL_ADC_Stop_DMA(&hadc1);
+	          raw_bsb_buff_tail = 0;
+	          HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&raw_bsb_buff, arrlen(raw_bsb_buff));
+	          HAL_TIM_Base_Start(&htim8);
+	      }
+
+	      frame_cnt++;
+	      frame_pend = 0;
 	  }
 
-	  //debug M17 transmission
-	  /*if(debug_tx==1)
+	  //debug
+	  if (debug_flag)
 	  {
-		  ;
-	  }*/
+		  //playMelody(ringtones[0]);
+		  initDebugTX();
+		  debug_flag = 0;
+	  }
 
 	  //received data over USB
 	  if(usb_drdy)
 	  {
-		  parseUSB(usb_rx, usb_len);
+		  parseUSB(&text_entry, usb_rx, usb_len);
 		  usb_drdy=0;
 	  }
 
-	  //check if there are any new baseband samples available
-	  uint16_t num_samples;
-	  if((num_samples=getNumItems(&raw_bsb_ring))>=400 && radio_state==RF_RX) //no specific reason to use 400 samples
+	  //tail==head - buffer overrun
+	  if (demodIsOverrun())
 	  {
+	      dbg_print("[Debug] Baseband buffer overrun!\n");
+	  }
+
+	  // repeat while there are baseband samples available
+	  while (demodSamplesGetNum() && radio_state==RF_RX)
+	  {
+		  //debug data dump over USB UART
+		  /*uint16_t b[BSB_BUFF_SIZ];
 		  for(uint16_t i=0; i<num_samples; i++)
+			  b[i] = demodSamplePop();
+		  CDC_Transmit_FS((uint8_t*)b, num_samples*sizeof(uint16_t));*/
+
+		  if(!lsf_found && !str_found && !pkt_found)
 		  {
-			  if(!str_syncd)
+			  //consume sample
+			  for(uint16_t i=0; i<arrlen(sw_corr_samples)-1; i++)
+				  sw_corr_samples[i]=sw_corr_samples[i+1];
+			  sw_corr_samples[arrlen(sw_corr_samples)-1] = -fltSample(demodSamplePop());
+
+			  //squared-L2 check against syncwords
+			  float symbols[8];
+			  for(uint8_t i=0; i<8; i++)
+				  symbols[i]=sw_corr_samples[i*5];
+
+			  //find LSF
+			  float dist = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
+			  if(dist < 2.5)
 			  {
-				  //consume sample
-				  for(uint16_t j=0; j<arrlen(flt_bsb_buff)-1; j++)
-					  flt_bsb_buff[j]=flt_bsb_buff[j+1];
-				  flt_bsb_buff[arrlen(flt_bsb_buff)-1] = -fltSample(popU16Value(&raw_bsb_ring));
-
-				  //L2 norm check against syncword
-				  float symbols[8];
-				  for(uint8_t j=0; j<8; j++)
-					  symbols[j]=flt_bsb_buff[j*5];
-
-				  //debug message
-				  float dist_lsf=eucl_norm(symbols, lsf_sync_symbols, 8);
-				  if(dist_lsf<4.5f)
+				  //find L2 minimum
+				  sample_offset = 0;
+				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
 				  {
-					  //find L2 minimum
-					  /*sample_offset=0;
-					  for(uint8_t j=1; j<=2; j++)
+					  for(uint8_t j=0; j<8; j++)
+						  symbols[j]=sw_corr_samples[i+j*5];
+
+					  float d = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
+
+					  if(d < dist)
 					  {
-						  for(uint8_t k=0; k<8; k++)
-							  symbols[k]=flt_bsb_buff[k*5+j];
-						  if(eucl_norm(symbols, lsf_sync_symbols, 8)<dist_lsf)
-							  sample_offset=j;
-					  }*/
-
-					  //dbg_print("[Debug] LSF syncword found at offset %d\n", sample_offset);
-					  str_syncd=1;
+						  sample_offset = i;
+						  dist = d;
+					  }
 				  }
+
+				  //dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
+
+				  lsf_found = 1;
+				  continue;
 			  }
-			  else
+
+			  //find stream frame
+			  dist = sq_eucl_norm(symbols, str_sync_symbols, 8);
+			  if(dist < 2.5)
 			  {
-				  //omit the remaining syncword samples
-				  //for(uint8_t i=0; i<2; i++)
-					  //fltSample(popU16Value(&raw_bsb_ring));
-
-				  //push sample to symbols buffer
-				  pld_symbs[num_pld_symbs] = -fltSample(popU16Value(&raw_bsb_ring));
-				  num_pld_symbs++;
-
-				  //omit 4 samples
-				  for(uint8_t i=0; i<4; i++)
-					  fltSample(popU16Value(&raw_bsb_ring));
-				  i+=4;
-
-				  if(num_pld_symbs==SYM_PER_PLD)
+				  //find L2 minimum
+				  sample_offset = 0;
+				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
 				  {
-					  /*uint32_t e = */decode_LSF(&lsf_rx, pld_symbs);
-					  //float err = (float)e/0xFFFFU;
+					  for(uint8_t j=0; j<8; j++)
+						  symbols[j]=sw_corr_samples[i+j*5];
+
+					  float d = sq_eucl_norm(symbols, str_sync_symbols, 8);
+
+					  if(d < dist)
+					  {
+						  sample_offset = i;
+						  dist = d;
+					  }
+				  }
+
+				  //dbg_print("[Debug] STR syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
+
+				  str_found = 1;
+				  continue;
+			  }
+
+			  //find stream frame
+			  dist = sq_eucl_norm(symbols, pkt_sync_symbols, 8);
+			  if(dist < 2.5)
+			  {
+				  //find L2 minimum
+				  sample_offset = 0;
+				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
+				  {
+					  for(uint8_t j=0; j<8; j++)
+						  symbols[j]=sw_corr_samples[i+j*5];
+
+					  float d = sq_eucl_norm(symbols, pkt_sync_symbols, 8);
+
+					  if(d < dist)
+					  {
+						  sample_offset = i;
+						  dist = d;
+					  }
+				  }
+
+				  //dbg_print("[Debug] PKT syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
+
+				  pkt_found = 1;
+				  continue;
+			  }
+		  }
+		  else
+		  {
+			  if (demodSamplesGetNum() >= SYM_PER_PLD*5+sample_offset)
+			  {
+				  // we need to use the sample from sw_corr_samples[]
+				  pld_symbs[0] = sw_corr_samples[8*5+sample_offset];
+				  for (uint8_t i=0; i<sample_offset; i++)
+					  fltSample(demodSamplePop());
+
+				  // push the rest of the samples
+				  for (uint16_t i=1; i<SYM_PER_PLD-1; i++)
+				  {
+					  pld_symbs[i] = -fltSample(demodSamplePop());
+					  for (uint8_t j=0; j<4; j++)
+						  fltSample(demodSamplePop());
+				  }
+
+				  //decode stuff based on what it is
+				  if (lsf_found)
+				  {
+					  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
+					  float err = (float)e/0xFFFFU;
 
 					  uint8_t call_dst[10], call_src[10], can;
 					  uint16_t type, crc;
@@ -2597,23 +631,56 @@ int main(void)
 					  can=(type>>7)&0xFU;
 					  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
 
-					  //if CRC matches data
-					  if(LSF_CRC(&lsf_rx)==crc)
+					  // if CRC matches data
+					  if (LSF_CRC(&lsf_rx)==crc)
 					  {
-						  dbg_print("[Debug] LSF received\n>SRC: %s\n>DST: %s\n>TYPE: %04X\n>CAN: %d\n>META: ",
+						  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: ",
 								  call_src, call_dst, type, can);
-						  for(uint8_t j=0; j<14; j++)
-							  dbg_print("%02X", lsf_rx.meta[j]);
-						  dbg_print("\n");
+						  for (uint8_t i=0; i<sizeof(lsf_rx.meta); i++)
+							  dbg_print("%02X", lsf_rx.meta[i]);
+						  dbg_print("\n ERR %.1f\n", err);
 					  }
 
-					  num_pld_symbs=0;
-					  str_syncd=0;
+					  lsf_found = 0;
 				  }
+				  else if (str_found)
+				  {
+					  uint8_t frame_data[16];
+					  uint8_t lich[5];
+					  uint16_t fn;
+					  uint8_t lich_cnt;
+					  decode_str_frame(frame_data, lich, &fn, &lich_cnt, pld_symbs);
+
+					  dbg_print("(%04X) ", fn);
+					  for (uint8_t i=0; i<16; i++)
+					  	  dbg_print("%02X", frame_data[i]);
+					  dbg_print("\n");
+
+					  str_found = 0;
+				  }
+				  else //pkt_found
+				  {
+					  uint8_t frame_data[25] = {0};
+					  uint8_t eof = 0;
+					  uint8_t fn = 0;
+
+					  decode_pkt_frame(frame_data, &eof, &fn, pld_symbs);
+
+					  dbg_print("(%02X) ", fn);
+					  for (uint8_t i=0; i<25; i++)
+					  	  dbg_print("%02X", frame_data[i]);
+					  dbg_print("\n");
+
+					  ; //TODO: add packet collector here
+
+					  pkt_found = 0;
+				  }
+
+				  // work done: clear old syncword detection buffer
+				  memset(sw_corr_samples, 0, sizeof(sw_corr_samples));
 			  }
 		  }
 	  }
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -2690,15 +757,15 @@ static void MX_ADC1_Init(void)
   hadc1.Instance = ADC1;
   hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
-  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ScanConvMode = DISABLE;
   hadc1.Init.ContinuousConvMode = DISABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
   hadc1.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T8_TRGO;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.NbrOfConversion = 2;
+  hadc1.Init.NbrOfConversion = 1;
   hadc1.Init.DMAContinuousRequests = ENABLE;
-  hadc1.Init.EOCSelection = ADC_EOC_SEQ_CONV;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   if (HAL_ADC_Init(&hadc1) != HAL_OK)
   {
     Error_Handler();
@@ -2713,18 +780,61 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief ADC2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC2_Init(void)
+{
+
+  /* USER CODE BEGIN ADC2_Init 0 */
+
+  /* USER CODE END ADC2_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC2_Init 1 */
+
+  /* USER CODE END ADC2_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc2.Instance = ADC2;
+  hadc2.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc2.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc2.Init.ScanConvMode = DISABLE;
+  hadc2.Init.ContinuousConvMode = DISABLE;
+  hadc2.Init.DiscontinuousConvMode = DISABLE;
+  hadc2.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_RISING;
+  hadc2.Init.ExternalTrigConv = ADC_EXTERNALTRIGCONV_T3_TRGO;
+  hadc2.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc2.Init.NbrOfConversion = 1;
+  hadc2.Init.DMAContinuousRequests = ENABLE;
+  hadc2.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc2) != HAL_OK)
+  {
+    Error_Handler();
+  }
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
   sConfig.Channel = ADC_CHANNEL_1;
-  sConfig.Rank = 2;
-  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc2, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN ADC1_Init 2 */
+  /* USER CODE BEGIN ADC2_Init 2 */
 
-  /* USER CODE END ADC1_Init 2 */
+  /* USER CODE END ADC2_Init 2 */
 
 }
 
@@ -2964,7 +1074,7 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 1600-1;
+  htim2.Init.Prescaler = 35-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 256-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -3000,6 +1110,51 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 2 */
   HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 2000-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 16800-1;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -3064,10 +1219,6 @@ static void MX_TIM7_Init(void)
   htim7.Init.Period = 5000-1;
   htim7.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim7) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  if (HAL_TIM_OnePulse_Init(&htim7, TIM_OPMODE_SINGLE) != HAL_OK)
   {
     Error_Handler();
   }
@@ -3210,6 +1361,9 @@ static void MX_DMA_Init(void)
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
 
 }
 
@@ -3319,8 +1473,7 @@ void Error_Handler(void)
   }
   /* USER CODE END Error_Handler_Debug */
 }
-
-#ifdef  USE_FULL_ASSERT
+#ifdef USE_FULL_ASSERT
 /**
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
