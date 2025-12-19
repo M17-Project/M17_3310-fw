@@ -407,7 +407,7 @@ int main(void)
 
 	          uint32_t cnt = 0;
 	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-	          fltSymbols(&frame_samples[0][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbolsPoly(&frame_samples[0][0], frame_symbols, rrc_taps_10_poly, 0);
 
 	          HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t *)&frame_samples[0][0],
 	                            2*SYM_PER_FRA*10, DAC_ALIGN_12B_R);
@@ -417,13 +417,13 @@ int main(void)
 	          // remaining preamble frames
 	          uint32_t cnt = 0;
 	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
 	      }
 	      else if (frame_cnt == warmup)
 	      {
 	          // LSF frame
 	          gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
-	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
 	      }
 	      else if (frame_cnt <= warmup + N)
 	      {
@@ -440,14 +440,14 @@ int main(void)
 	              payload[25] = 0x80 | (remaining << 2);
 
 	          gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
-	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
 	      }
 	      else if (frame_cnt == warmup + N + 1)
 	      {
 	          // EOT frame
 	          uint32_t cnt = 0;
 	          gen_eot_i8(frame_symbols, &cnt);
-	          fltSymbols(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10, 0);
+	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
 	      }
 	      else
 	      {

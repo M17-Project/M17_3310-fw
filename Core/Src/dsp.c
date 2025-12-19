@@ -99,18 +99,18 @@ void flushBsbFlt(void)
 }
 
 //TX baseband filtering (sps=10)
-void fltSymbols(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict SYM_PER_FRA], const float* __restrict flt, uint8_t phase_inv)
+/*void fltSymbols(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict SYM_PER_FRA], const float* __restrict flt, uint8_t phase_inv)
 {
-	static float sr[81*2];
+	static float sr[81*2] = {0};
 	static uint8_t w = 0;
 
-	for (uint_fast8_t i = 0; i < SYM_PER_FRA; i++)
+	for (uint8_t i = 0; i < SYM_PER_FRA; i++)
 	{
-		for (uint_fast8_t j = 0; j < 10; j++)
+        const float symbol = phase_inv ? -(float)in[i] : (float)in[i];
+
+		for (uint8_t j = 0; j < 10; j++)
 		{
-			float x = (j == 0)
-						? (phase_inv ? -(float)in[i] : (float)in[i])
-						: 0.0f;
+			const float x = (j == 0) ? symbol : 0.0f;
 
 			sr[w]	   = x;
 			sr[w + 81] = x;
@@ -120,7 +120,7 @@ void fltSymbols(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict 
 
 			float acc = 0.0f;
 
-			for (uint_fast8_t k = 0; k < 80; k += 4)
+			for (uint8_t k = 0; k < 80; k += 4)
 			{
 				acc += hp[k]     * tp[k];
 				acc += hp[k + 1] * tp[k + 1];
@@ -133,14 +133,15 @@ void fltSymbols(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict 
 			out[i*10 + j] = (uint16_t)(DAC_IDLE + acc * 250.0f);
 
 			if (w == 0)
-				w = 80;
-			else
-				w--;
+                w = 80;
+            else
+                w--;
 		}
 	}
-}
+}*/
 
-void fltSymbolsPoly(uint16_t *__restrict out, const int8_t *__restrict in, const float *__restrict flt, uint8_t phase_inv)
+//faster TX baseband filtering (sps=10)
+void fltSymbolsPoly(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict SYM_PER_FRA], const float* __restrict flt, uint8_t phase_inv)
 {
 	//history
 	static float sr[TAPS_PER_PHASE * 2] = {0};
@@ -156,14 +157,14 @@ void fltSymbolsPoly(uint16_t *__restrict out, const int8_t *__restrict in, const
 
 		//store once, duplicated for linear access
 		float * __restrict hp = &sr[w];
-		hp[0]				  = x;
-		hp[TAPS_PER_PHASE]	 = x;
+		hp[0]			   = x;
+		hp[TAPS_PER_PHASE] = x;
 
 		//phase pointer
 		const float * __restrict tp = flt;
 
 		//generate sps (10) output samples
-		for (uint_fast8_t ph = 0; ph < 10; ph++)
+		for (uint8_t ph = 0; ph < 10; ph++)
 		{
 			float acc;
 
