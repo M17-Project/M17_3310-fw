@@ -623,13 +623,12 @@ int main(void)
 					  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
 					  float err = (float)e/0xFFFFU;
 
-					  uint8_t call_dst[10], call_src[10], can;
-					  uint16_t type, crc;
+					  char call_dst[10], call_src[10];
 					  decode_callsign_bytes(call_dst, lsf_rx.dst);
 					  decode_callsign_bytes(call_src, lsf_rx.src);
-					  type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
-					  can=(type>>7)&0xFU;
-					  crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
+					  uint16_t type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
+					  uint8_t can=(type>>7)&0xFU;
+					  uint16_t crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
 
 					  // if CRC matches data
 					  if (LSF_CRC(&lsf_rx)==crc)
