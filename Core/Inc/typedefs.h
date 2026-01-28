@@ -1,6 +1,8 @@
 #ifndef INC_TYPEDEFS_H_
 #define INC_TYPEDEFS_H_
 
+#include <stdint.h>
+
 //text entry types
 typedef enum
 {
@@ -73,6 +75,7 @@ typedef struct
 {
 	char src[10];
 	char dst[10];
+	uint16_t len;
 	char text[825-4];
 } msg_t;
 

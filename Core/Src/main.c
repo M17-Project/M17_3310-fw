@@ -676,6 +676,7 @@ int main(void)
 					  uint8_t frame_data[25] = {0};
 					  uint8_t eof = 0;
 					  uint8_t fn = 0;
+					  static uint16_t wr_offs = 0;
 
 					  decode_pkt_frame(frame_data, &eof, &fn, pld_symbs);
 
@@ -684,20 +685,28 @@ int main(void)
 					  	  dbg_print("%02X", frame_data[i]);
 					  dbg_print("\n");
 
-					  ; //TODO: add packet collector here
+					  if (!eof)
+					  {
+						  memcpy(&rcvd_msg.text[wr_offs], frame_data, 25);
+						  wr_offs += 25;
+					  }
 
 					  //display last message contents
-					  //we are using last-received LSF here, which might be wrong
-					  //TODO: this logic assumes that the message is single-framed. fix this
-					  if (eof)
+					  //we are using SRC/DST data from the last
+					  //correctly received LSF here, which might be wrong
+					  else
 					  {
-						  size_t len = fn - 4;
-						  if (CRC_M17(frame_data, fn)==0)
+						  memcpy(&rcvd_msg.text[wr_offs], frame_data, fn);
+						  rcvd_msg.len = wr_offs + fn;
+
+						  if (rcvd_msg.text[0] == 0x05 && CRC_M17((uint8_t*)rcvd_msg.text, rcvd_msg.len)==0)
 						  {
-							  memcpy(rcvd_msg.text, &frame_data[1], len);
-							  rcvd_msg.text[len] = 0;
+							  rcvd_msg.len -= 4;
+							  memmove(&rcvd_msg.text[0], &rcvd_msg.text[1], rcvd_msg.len+1); //include the null-term
 							  pending_disp_state = DISP_TEXT_MSG_RCVD;
 						  }
+
+						  wr_offs = 0;
 					  }
 
 					  pkt_found = 0;

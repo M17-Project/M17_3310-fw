@@ -360,8 +360,8 @@ void showRcvdTextMessage(disp_dev_t *disp_dev, const char* src, const char* dst,
 	dispClear(disp_dev, COL_WHITE);
 
 	char header[2][8+10+1];
-	sprintf(&header[0][0], "From: %s", src);
-	sprintf(&header[1][0], "To: %s", dst);
+	sprintf(&header[0][0], "F: %s", src);
+	sprintf(&header[1][0], "T: %s", dst);
 
 	setString(disp_dev, 0, 0, &nokia_small, header[0], COL_BLACK, ALIGN_LEFT);
 	setString(disp_dev, 0, 8, &nokia_small, header[1], COL_BLACK, ALIGN_LEFT);
