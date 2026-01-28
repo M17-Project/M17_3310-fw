@@ -3,15 +3,19 @@
 #include <stdio.h>
 #include "main.h"
 
-static uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max)
+extern uint8_t rx_scroll;
+
+uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max)
 {
 	uint8_t xp = 0;
 	uint8_t n  = 0;
 
-	if (!str || !*str || max == 0)
+	if (!str || !*str)
 		return 0;
 
-	lines[n++] = str;
+	if (lines && n < max)
+		lines[n] = str;
+	n++;
 
 	while (*str)
 	{
@@ -40,9 +44,9 @@ static uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lin
 		if (xp && xp + ww > RES_X)
 		{
 			xp = 0;
-
-			if (n < max && *str)
-				lines[n++] = str;
+			if (lines && n < max)
+				lines[n] = str;
+			n++;
 		}
 
 		// consume word
@@ -236,27 +240,29 @@ void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t 
 	dispRefresh(disp_dev);
 }
 
-//display text with word wrapping - only the last few lines (display's limitation)
-void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines)
+void setStringWordWrapFromLine(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f,
+		const char *str, uint8_t color, uint8_t start_line, uint8_t max_lines)
 {
 	const char *lines[16];
 	uint8_t total = wrapLineStarts(f, str, lines, 16);
 
-	if (!total)
+	if (!total || start_line >= total)
 		return;
 
-	uint8_t first = (total > max_lines) ? (total - max_lines) : 0;
+	uint8_t end = start_line + max_lines;
+	if (end > total)
+		end = total;
 
-	for (uint8_t i = first; i < total; i++)
+	for (uint8_t i = start_line; i < end; i++)
 	{
 		uint8_t xp = x;
 		const char *s = lines[i];
-		const char *end = (i + 1 < total) ? lines[i + 1] : NULL;
+		const char *e = (i + 1 < total) ? lines[i + 1] : NULL;
 
 		while (*s == ' ')
 			s++;
 
-		while (*s && s != end)
+		while (*s && s != e)
 		{
 			setChar(disp_dev, xp, y, f, *s, color);
 			xp += f->symbol[*s - ' '].width;
@@ -267,6 +273,17 @@ void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, cons
 	}
 
 	dispRefresh(disp_dev);
+}
+
+//display text with word wrapping - only the last few lines (display's limitation)
+void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines)
+{
+	const char *lines[16];
+	uint8_t total = wrapLineStarts(f, str, lines, 16);
+
+	uint8_t first = (total > max_lines) ? (total - max_lines) : 0;
+
+	setStringWordWrapFromLine(disp_dev, x, y, f, str, color, first, max_lines);
 }
 
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill)
@@ -360,15 +377,13 @@ void showRcvdTextMessage(disp_dev_t *disp_dev, const char* src, const char* dst,
 	dispClear(disp_dev, COL_WHITE);
 
 	char header[2][8+10+1];
-	sprintf(&header[0][0], "F: %s", src);
-	sprintf(&header[1][0], "T: %s", dst);
+	sprintf(&header[0][0], "%s", src);
+	sprintf(&header[1][0], "\x82%s", dst);
 
 	setString(disp_dev, 0, 0, &nokia_small, header[0], COL_BLACK, ALIGN_LEFT);
 	setString(disp_dev, 0, 8, &nokia_small, header[1], COL_BLACK, ALIGN_LEFT);
 
-	setStringWordWrapLastLines(disp_dev, 0, 18, &nokia_small, msg, COL_BLACK, 3);
-
-	//press C to exit
+	setStringWordWrapFromLine(disp_dev, 0, 18, &nokia_small, msg, COL_BLACK, rx_scroll, 3);
 }
 
 void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t entry_mode)

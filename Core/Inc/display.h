@@ -25,6 +25,7 @@ extern dev_settings_t dev_settings;
 extern void setBacklight(uint8_t level);
 extern uint16_t getBattVoltage(void);
 
+uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max);
 void dispWrite(disp_dev_t *disp_dev, uint8_t dc, uint8_t val);
 void dispInit(disp_dev_t *disp_dev);
 void dispGotoXY(disp_dev_t *disp_dev, uint8_t x, uint8_t y);
@@ -34,6 +35,8 @@ void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set);
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color);
 void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align);
 void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color);
+void setStringWordWrapFromLine(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f,
+		const char *str, uint8_t color, uint8_t start_line, uint8_t max_lines);
 void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines);
 
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill);

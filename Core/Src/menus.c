@@ -268,8 +268,17 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, abc_t *text_entry, dev
 		case DISP_TEXT_MSG_RCVD:
 			const msg_t *msg = UIGetLastMsg();
 			showRcvdTextMessage(disp_dev, msg->src, msg->dst, msg->text);
-			//TODO: make this non-blocking
+
+			//light up the sdisplay
+			if (!dev_settings->backlight_always)
+			{
+				setBacklight(dev_settings->backlight_level);
+				startBacklightTimer();
+			}
+
+			//TODO: make these non-blocking
 			//playMelody(ringtones[0]);
+			actVibr(100);
 		break;
 
 		default:

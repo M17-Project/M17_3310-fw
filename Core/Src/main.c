@@ -163,6 +163,8 @@ uint8_t lsf_found, str_found, pkt_found;	//syncd with the incoming stream?
 
 //received message
 msg_t rcvd_msg;
+uint8_t rx_scroll;
+uint8_t rx_total_lines;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -703,6 +705,10 @@ int main(void)
 						  {
 							  rcvd_msg.len -= 4;
 							  memmove(&rcvd_msg.text[0], &rcvd_msg.text[1], rcvd_msg.len+1); //include the null-term
+
+							  rx_scroll = 0;
+							  rx_total_lines = wrapLineStarts(&nokia_small, rcvd_msg.text, NULL, 0);
+
 							  pending_disp_state = DISP_TEXT_MSG_RCVD;
 						  }
 

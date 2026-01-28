@@ -9,6 +9,10 @@
 extern TIM_HandleTypeDef htim7;		//TIM7 - text entry timer
 extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
 
+extern msg_t rcvd_msg;
+extern uint8_t rx_scroll;
+extern uint8_t rx_total_lines;
+
 static uint32_t next_key_time;
 
 typedef struct
@@ -395,7 +399,10 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 			//received message
 			else if(*disp_state==DISP_TEXT_MSG_RCVD)
 			{
-				; //nothing yet
+				if (rx_scroll + 3 < rx_total_lines)
+					rx_scroll++;
+				drawRect(disp_dev, 0, 18, RES_X-1, RES_Y-1, COL_WHITE, 1);
+				setStringWordWrapFromLine(disp_dev, 0, 18, &nokia_small, rcvd_msg.text, COL_BLACK, rx_scroll, 3);
 			}
 
 			//other menus
@@ -444,7 +451,10 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 			//received message
 			else if(*disp_state==DISP_TEXT_MSG_RCVD)
 			{
-				; //nothing yet
+				if (rx_scroll)
+					rx_scroll--;
+				drawRect(disp_dev, 0, 18, RES_X-1, RES_Y-1, COL_WHITE, 1);
+				setStringWordWrapFromLine(disp_dev, 0, 18, &nokia_small, rcvd_msg.text, COL_BLACK, rx_scroll, 3);
 			}
 
 			//other menus
