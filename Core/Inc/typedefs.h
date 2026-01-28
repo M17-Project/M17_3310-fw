@@ -68,4 +68,12 @@ typedef enum
 	EDIT_RF_PWR
 } edit_set_t;
 
+//text message
+typedef struct
+{
+	char src[10];
+	char dst[10];
+	char text[825-4];
+} msg_t;
+
 #endif /* INC_TYPEDEFS_H_ */

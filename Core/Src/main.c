@@ -91,6 +91,7 @@ abc_t text_entry; //entry mode is TEXT_LOWERCASE by default
 //menus state machine
 uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
 disp_state_t curr_disp_state = DISP_NONE;
+volatile disp_state_t pending_disp_state = DISP_NONE;
 
 //usb-related
 uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
@@ -159,6 +160,9 @@ float pld_symbs[SYM_PER_PLD];				//payload symbols
 
 uint8_t sample_offset;						//location of the squared-L2 minimum
 uint8_t lsf_found, str_found, pkt_found;	//syncd with the incoming stream?
+
+//received message
+msg_t rcvd_msg;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -361,6 +365,17 @@ int main(void)
   {
 	  //current tick
 	  t_now = HAL_GetTick();
+
+	  //get any pending transitions (triggered externally, not through the keypad)
+	  if (pending_disp_state != DISP_NONE)
+	  {
+	      leaveState(curr_disp_state, text_entry.buffer, &dev_settings, EDIT_NONE, &radio_state);
+
+	      curr_disp_state = pending_disp_state;
+	      pending_disp_state = DISP_NONE; //reset
+
+	      enterState(&disp_dev, curr_disp_state, &text_entry, &dev_settings);
+	  }
 
 	  //handle key presses
 	  handleKey(&disp_dev, &curr_disp_state, &text_entry, &radio_state,
@@ -623,9 +638,8 @@ int main(void)
 					  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
 					  float err = (float)e/0xFFFFU;
 
-					  char call_dst[10], call_src[10];
-					  decode_callsign_bytes(call_dst, lsf_rx.dst);
-					  decode_callsign_bytes(call_src, lsf_rx.src);
+					  decode_callsign_bytes(rcvd_msg.dst, lsf_rx.dst);
+					  decode_callsign_bytes(rcvd_msg.src, lsf_rx.src);
 					  uint16_t type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
 					  uint8_t can=(type>>7)&0xFU;
 					  uint16_t crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
@@ -634,7 +648,7 @@ int main(void)
 					  if (LSF_CRC(&lsf_rx)==crc)
 					  {
 						  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: ",
-								  call_src, call_dst, type, can);
+								  rcvd_msg.src, rcvd_msg.dst, type, can);
 						  for (uint8_t i=0; i<sizeof(lsf_rx.meta); i++)
 							  dbg_print("%02X", lsf_rx.meta[i]);
 						  dbg_print("\n ERR %.1f\n", err);
@@ -671,6 +685,20 @@ int main(void)
 					  dbg_print("\n");
 
 					  ; //TODO: add packet collector here
+
+					  //display last message contents
+					  //we are using last-received LSF here, which might be wrong
+					  //TODO: this logic assumes that the message is single-framed. fix this
+					  if (eof)
+					  {
+						  size_t len = fn - 4;
+						  if (CRC_M17(frame_data, fn)==0)
+						  {
+							  memcpy(rcvd_msg.text, &frame_data[1], len);
+							  rcvd_msg.text[len] = 0;
+							  pending_disp_state = DISP_TEXT_MSG_RCVD;
+						  }
+					  }
 
 					  pkt_found = 0;
 				  }

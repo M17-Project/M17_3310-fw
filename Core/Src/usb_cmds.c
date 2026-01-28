@@ -1,5 +1,7 @@
 #include "usb_cmds.h"
 
+extern volatile disp_state_t pending_disp_state;
+
 //USB control
 void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 {
@@ -84,6 +86,12 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 	{
 		strcpy(text_entry->buffer, strstr((char*)str, "=")+1);
 		initTextTX(text_entry->buffer);
+	}
+
+	//test: display last text message
+	else if(strncmp((char*)str, "disp_msg", 8)==0)
+	{
+		pending_disp_state = DISP_TEXT_MSG_RCVD;
 	}
 
 	//get LSF META field

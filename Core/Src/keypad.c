@@ -392,6 +392,12 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 				; //nothing yet
 			}
 
+			//received message
+			else if(*disp_state==DISP_TEXT_MSG_RCVD)
+			{
+				; //nothing yet
+			}
+
 			//other menus
 			else
 			{
@@ -433,6 +439,12 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 				clearCode(); // clear the T9 code
 				HAL_TIM_Base_Stop(&htim7);
 				TIM7->CNT=0;
+			}
+
+			//received message
+			else if(*disp_state==DISP_TEXT_MSG_RCVD)
+			{
+				; //nothing yet
 			}
 
 			//other menus

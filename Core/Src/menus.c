@@ -1,9 +1,11 @@
 #include "menus.h"
 #include "display.h"
 #include "keypad.h"
+#include "ui_data.h"
+#include "ringtones.h"
 #include <m17.h>
 
-disp_t displays[13] =
+disp_t displays[DISP_NUM_ITEMS] =
 {
 	//DISP_NONE - 0
 	{
@@ -57,7 +59,7 @@ disp_t displays[13] =
 		{EDIT_NONE, EDIT_NONE, EDIT_NONE, EDIT_NONE}
 	},
 
-	//4
+	//DISP_SETTINGS - 4
 	{
 		"Settings",
 		4,
@@ -83,7 +85,7 @@ disp_t displays[13] =
 		{EDIT_RF_PPM, EDIT_RF_PWR}
 	},
 
-	//6
+	//DISP_DISPLAY_SETTINGS - 6
 	{
 		"Display settings",
 		3,
@@ -96,7 +98,7 @@ disp_t displays[13] =
 		{EDIT_NONE}
 	},
 
-	//7
+	//DISP_KEYBOARD_SETTINGS - 7
 	{
 		"Keyboard",
 		3,
@@ -122,7 +124,7 @@ disp_t displays[13] =
 		{EDIT_M17_SRC_CALLSIGN, EDIT_M17_DST_CALLSIGN, EDIT_M17_CAN}
 	},
 
-	//9
+	//DISP_INFO - 9
 	{
 		"Info",
 		3,
@@ -162,6 +164,45 @@ disp_t displays[13] =
 	},
 
 	//DISP_TEXT_VALUE_ENTRY - 12
+	{
+		"",
+		0,
+
+		{""},
+		{""},
+		{DISP_MAIN_SCR},
+		DISP_MAIN_SCR,
+
+		{EDIT_NONE}
+	},
+
+	//DISP_NUM_VALUE_ENTRY - 13
+	{
+		"",
+		0,
+
+		{""},
+		{""},
+		{DISP_MAIN_SCR},
+		DISP_MAIN_SCR,
+
+		{EDIT_NONE}
+	},
+
+	//DISP_ON_OFF_ENTRY - 14
+	{
+		"",
+		0,
+
+		{""},
+		{""},
+		{DISP_MAIN_SCR},
+		DISP_MAIN_SCR,
+
+		{EDIT_NONE}
+	},
+
+	//DISP_TEXT_MSG_RCVD - 15
 	{
 		"",
 		0,
@@ -222,6 +263,13 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, abc_t *text_entry, dev
 			text_entry->pos = 0;
 			// we keep the last text entry mode intentionally
 			showTextValueEntry(disp_dev, text_entry->mode);
+		break;
+
+		case DISP_TEXT_MSG_RCVD:
+			const msg_t *msg = UIGetLastMsg();
+			showRcvdTextMessage(disp_dev, msg->src, msg->dst, msg->text);
+			//TODO: make this non-blocking
+			//playMelody(ringtones[0]);
 		break;
 
 		default:

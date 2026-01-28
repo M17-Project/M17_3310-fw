@@ -355,13 +355,20 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 	}
 }
 
-void showRcvdTextMessage(disp_dev_t *disp_dev)
+void showRcvdTextMessage(disp_dev_t *disp_dev, const char* src, const char* dst, const char* msg)
 {
 	dispClear(disp_dev, COL_WHITE);
 
-	setString(disp_dev, 0, 0, &nokia_small, "Message:", COL_BLACK, ALIGN_LEFT);
+	char header[2][8+10+1];
+	sprintf(&header[0][0], "From: %s", src);
+	sprintf(&header[1][0], "To: %s", dst);
 
-	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "OK", COL_BLACK, ALIGN_CENTER);
+	setString(disp_dev, 0, 0, &nokia_small, header[0], COL_BLACK, ALIGN_LEFT);
+	setString(disp_dev, 0, 8, &nokia_small, header[1], COL_BLACK, ALIGN_LEFT);
+
+	setStringWordWrapLastLines(disp_dev, 0, 18, &nokia_small, msg, COL_BLACK, 3);
+
+	//press C to exit
 }
 
 void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t entry_mode)

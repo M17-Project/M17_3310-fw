@@ -12,7 +12,7 @@
 
 typedef struct disp_dev_t disp_dev_t;
 
-extern disp_t displays[13];
+extern disp_t displays[DISP_NUM_ITEMS];
 extern disp_dev_t disp_dev;
 
 void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings);
