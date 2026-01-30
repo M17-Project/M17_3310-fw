@@ -86,9 +86,19 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 
 	//load settings into menus
 	//frequency correction
-	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm",
-			(int8_t)(dev_settings->freq_corr), (uint8_t)fabsf(dev_settings->freq_corr * 10.0f) % 10
-	);
+	float v = dev_settings->freq_corr;
+	char sign = '+';
+
+	if (v < 0.0f)
+	{
+	    sign = '-';
+	    v = -v;
+	}
+
+	int ip = (int)v;
+	int fp = (int)((v * 10.0f) + 0.5f) % 10;
+
+	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%c%d.%dppm", sign, ip, fp);
 
 	//RF power
 	if(dev_settings->channel.rf_pwr==RF_PWR_HIGH)

@@ -206,7 +206,7 @@ void initTextTX(const char *message)
 	packet_payload[0] = 0x05; //packet type: SMS
 
 	strncpy((char*)&packet_payload[1], message, msg_len);
-	packet_payload[msg_len+1] = 0; //null terminaton
+	packet_payload[msg_len+1] = 0; //null termination
 
 	uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
 	packet_payload[msg_len+2] = crc>>8;

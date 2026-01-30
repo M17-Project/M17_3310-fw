@@ -225,11 +225,22 @@ void loadMenuValues(disp_state_t state, dev_settings_t *dev_settings)
 		break;
 
 		case DISP_RADIO_SETTINGS:
-			sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%+d.%dppm",
-					(int8_t)(dev_settings->freq_corr),
-					(uint8_t)fabsf(dev_settings->freq_corr * 10.0f) % 10);
+		{
+			float v = dev_settings->freq_corr;
+			char sign = '+';
+
+			if (v < 0.0f)
+			{
+			    sign = '-';
+			    v = -v;
+			}
+
+			int ip = (int)v;
+			int fp = (int)((v * 10.0f) + 0.5f) % 10;
+			sprintf(displays[state].value[0], "%c%d.%dppm", sign, ip, fp);
 			snprintf(displays[state].value[1], 24, "%s",
 					dev_settings->channel.rf_pwr == RF_PWR_HIGH ? "High" : "Low");
+		}
 		break;
 
 		case DISP_M17_SETTINGS:
