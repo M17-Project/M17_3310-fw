@@ -712,6 +712,7 @@ int main(void)
 							  pending_disp_state = DISP_TEXT_MSG_RCVD;
 						  }
 
+						  //TODO: this requires a timeout
 						  wr_offs = 0;
 					  }
 
