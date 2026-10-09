@@ -5,6 +5,7 @@
 #include "keymaps.h"
 #include "settings.h"
 #include "../t9/t9.h"
+#include "../t9/dict/dict_en.h"
 
 extern TIM_HandleTypeDef htim7;		//TIM7 - text entry timer
 extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
@@ -34,7 +35,7 @@ static const char *addCode(char symbol)
 		t9.code[t9.code_len] = 0;
 	}
 
-	return getWord(dict, t9.code);
+	return getWord(dict_en, t9.code);
 }
 
 static inline void clearCode(void)

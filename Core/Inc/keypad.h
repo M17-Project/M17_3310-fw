@@ -17,7 +17,6 @@ extern uint8_t saveData(const void *data, uint16_t size);
 extern dev_settings_t def_dev_settings;
 extern uint8_t menu_pos, menu_pos_hl;
 extern uint8_t debug_flag;
-extern const char dict[];
 
 extern codeplug_t codeplug;
 
