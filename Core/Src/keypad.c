@@ -6,6 +6,10 @@
 #include "settings.h"
 #include "../t9/t9.h"
 #include "../t9/dict/dict_en.h"
+#include "rf_module.h"
+
+#define KBD_SCAN_MS		10		//keypad scan period
+#define VFO_STEP_HZ		12500
 
 extern TIM_HandleTypeDef htim7;		//TIM7 - text entry timer
 extern TIM_HandleTypeDef htim14;	//TIM14 - display backlight timeout timer
@@ -110,93 +114,127 @@ void resetTextEntry(void)
 	TIM7->CNT = 0;
 }
 
-//scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
-kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep)
+//VFO: move RX and TX frequency together (keeps a split offset)
+static void stepVFO(dev_settings_t *dev_settings, int32_t step)
 {
+	dev_settings->channel.rx_frequency += step;
+	dev_settings->channel.tx_frequency += step;
+	setFreqRF(dev_settings->channel.rx_frequency, dev_settings->freq_corr); //we are receiving
+}
+
+//memory mode: select the next/previous codeplug channel
+static void stepChannel(dev_settings_t *dev_settings, int8_t dir)
+{
+	if (codeplug.num_items == 0)
+		return;
+
+	if (dir > 0)
+		dev_settings->ch_num = (dev_settings->ch_num + 1) % codeplug.num_items;
+	else
+		dev_settings->ch_num = (dev_settings->ch_num == 0) ? codeplug.num_items - 1 : dev_settings->ch_num - 1;
+
+	memcpy(&dev_settings->channel, &codeplug.channel[dev_settings->ch_num], sizeof(ch_settings_t));
+
+	//apply the new channel (RX always uses the 25 kHz filter, see chBwRF() workaround)
+	setPowerRF(dev_settings->channel.rf_pwr);
+	setFreqRF(dev_settings->channel.rx_frequency, dev_settings->freq_corr);
+}
+
+//read the key matrix (columns driven high, rows have pull-downs)
+static kbd_key_t scanMatrix(void)
+{
+	static const struct
+	{
+		GPIO_TypeDef *port;
+		uint16_t pin;
+		kbd_key_t keys[5]; //ROW_1..ROW_5
+	} cols[3] =
+	{
+		{COL_1_GPIO_Port, COL_1_Pin, {KEY_C,     KEY_1, KEY_4, KEY_7, KEY_ASTERISK}},
+		{COL_2_GPIO_Port, COL_2_Pin, {KEY_LEFT,  KEY_2, KEY_5, KEY_8, KEY_0}},
+		{COL_3_GPIO_Port, COL_3_Pin, {KEY_RIGHT, KEY_3, KEY_6, KEY_9, KEY_HASH}}
+	};
+
+	for (uint8_t c=0; c<3; c++)
+	{
+		kbd_key_t key = KEY_NONE;
+
+		cols[c].port->BSRR = (uint32_t)cols[c].pin;
+		for (volatile uint8_t i=0; i<100; i++); //settle
+
+		if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
+			key = cols[c].keys[0];
+		else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
+			key = cols[c].keys[1];
+		else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
+			key = cols[c].keys[2];
+		else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
+			key = cols[c].keys[3];
+		else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
+			key = cols[c].keys[4];
+
+		cols[c].port->BSRR = ((uint32_t)cols[c].pin<<16);
+
+		if (key != KEY_NONE)
+			return key;
+	}
+
+	return KEY_NONE;
+}
+
+//scan keyboard - 'rep' milliseconds delay after a valid keypress is detected
+//the matrix is scanned every KBD_SCAN_MS, a key must be stable for two scans
+kbd_key_t scanKeys(radio_state_t radio_state, uint16_t rep)
+{
+	static uint32_t last_scan;
+	static kbd_key_t last_raw = KEY_NONE;
+	static uint8_t ok_reported;
+
 	uint32_t now = HAL_GetTick();
 
-	// too early to report another key? or not in RX mode?
-	if (now < next_key_time || radio_state != RF_RX)
+	// not in RX mode?
+	if (radio_state != RF_RX)
 		return KEY_NONE;
 
-	kbd_key_t key = KEY_NONE;
+	if ((uint32_t)(now - last_scan) < KBD_SCAN_MS)
+		return KEY_NONE;
+	last_scan = now;
 
 	//PD2 high means KEY_OK is pressed
-	uint8_t ok_now = (BTN_OK_GPIO_Port->IDR & BTN_OK_Pin) ? 1 : 0;
-	static uint8_t ok_prev = 0; //for press/release detection
+	kbd_key_t raw = (BTN_OK_GPIO_Port->IDR & BTN_OK_Pin) ? KEY_OK : scanMatrix();
 
-	//OK button pressed
-	if(ok_now && !ok_prev)
+	//debounce: wait until the reading is stable
+	if (raw != last_raw)
 	{
-		ok_prev = 1;
+		last_raw = raw;
+		return KEY_NONE;
+	}
+
+	if (raw == KEY_NONE)
+	{
+		ok_reported = 0;
+		return KEY_NONE;
+	}
+
+	//OK button: report once per press
+	if (raw == KEY_OK)
+	{
+		if (ok_reported)
+			return KEY_NONE;
+
+		ok_reported = 1;
 		next_key_time = now + rep;
 		return KEY_OK;
 	}
-	else if (!ok_now) //released
-	{
-		ok_prev = 0;
-	}
 
-	//column 1
-	COL_1_GPIO_Port->BSRR = (uint32_t)COL_1_Pin;
-	for (volatile uint8_t i=0; i<100; i++);
-	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
-		key = KEY_C;
-	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
-		key = KEY_1;
-	else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
-		key = KEY_4;
-	else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
-		key = KEY_7;
-	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
-		key = KEY_ASTERISK;
-	COL_1_GPIO_Port->BSRR = ((uint32_t)COL_1_Pin<<16);
-	if(key!=KEY_NONE)
-	{
-		next_key_time = now + rep;
-		return key;
-	}
+	ok_reported = 0;
 
-	//column 2
-	COL_2_GPIO_Port->BSRR = (uint32_t)COL_2_Pin;
-	for (volatile uint8_t i=0; i<100; i++);
-	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
-		key = KEY_LEFT;
-	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
-		key = KEY_2;
-	else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
-		key = KEY_5;
-	else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
-		key = KEY_8;
-	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
-		key = KEY_0;
-	COL_2_GPIO_Port->BSRR = ((uint32_t)COL_2_Pin<<16);
-	if(key!=KEY_NONE)
-	{
-		next_key_time = now + rep;
-		return key;
-	}
+	// too early to report another key? (wrap-around safe)
+	if ((int32_t)(now - next_key_time) < 0)
+		return KEY_NONE;
 
-	//column 3
-	COL_3_GPIO_Port->BSRR = (uint32_t)COL_3_Pin;
-	for (volatile uint8_t i=0; i<100; i++);
-	if(ROW_1_GPIO_Port->IDR & ROW_1_Pin)
-		key = KEY_RIGHT;
-	else if(ROW_2_GPIO_Port->IDR & ROW_2_Pin)
-		key = KEY_3;
-	else if(ROW_3_GPIO_Port->IDR & ROW_3_Pin)
-		key = KEY_6;
-	else if(ROW_4_GPIO_Port->IDR & ROW_4_Pin)
-		key = KEY_9;
-	else if(ROW_5_GPIO_Port->IDR & ROW_5_Pin)
-		key = KEY_HASH;
-	COL_3_GPIO_Port->BSRR = ((uint32_t)COL_3_Pin<<16);
-	if(key!=KEY_NONE)
-	{
-		next_key_time = now + rep;
-	}
-
-	return key;
+	next_key_time = now + rep;
+	return raw;
 }
 
 //push a character into the text message buffer
@@ -371,23 +409,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				if(dev_settings->tuning_mode==TUNING_VFO)
-				{
-					dev_settings->channel.tx_frequency -= 12500;
-					setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
-
-					char str[24];
-					sprintf(str, "T %ld.%04ld",
-							dev_settings->channel.tx_frequency/1000000,
-							(dev_settings->channel.tx_frequency%1000000)/100);
-					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, COL_WHITE, 1);
-					setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
-				}
+					stepVFO(dev_settings, -VFO_STEP_HZ);
 				else //if (dev_settings->tuning_mode==TUNING_MEM)
-				{
-					dev_settings->ch_num++;
-					dev_settings->ch_num %= codeplug.num_items;
-					memcpy(&dev_settings->channel, &codeplug.channel[dev_settings->ch_num], sizeof(ch_settings_t));
-				}
+					stepChannel(dev_settings, 1);
+
+				showMainScreen(disp_dev);
 			}
 
 			//text/value entry
@@ -422,22 +448,11 @@ void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry
 			if(*disp_state==DISP_MAIN_SCR)
 			{
 				if(dev_settings->tuning_mode==TUNING_VFO)
-				{
-					dev_settings->channel.tx_frequency += 12500;
-					setFreqRF(dev_settings->channel.tx_frequency, dev_settings->freq_corr);
-
-					char str[24];
-					sprintf(str, "T %ld.%04ld",
-							dev_settings->channel.tx_frequency/1000000,
-							(dev_settings->channel.tx_frequency%1000000)/100);
-					drawRect(disp_dev, 0, 36, RES_X-1, 36+8, COL_WHITE, 1);
-					setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
-				}
+					stepVFO(dev_settings, VFO_STEP_HZ);
 				else //if (dev_settings->tuning_mode==TUNING_MEM)
-				{
-					dev_settings->ch_num = dev_settings->ch_num==0 ? codeplug.num_items-1: dev_settings->ch_num-1;
-					memcpy(&dev_settings->channel, &codeplug.channel[dev_settings->ch_num], sizeof(ch_settings_t));
-				}
+					stepChannel(dev_settings, -1);
+
+				showMainScreen(disp_dev);
 			}
 
 			//text/value entry

@@ -1,31 +1,51 @@
 #include "rf_module.h"
 
+//AT1846S register shadow (page 0 only). The MCU writes every register it later
+//modifies, so read-modify-write operations use this copy instead of AT+PEEK.
+//Reading back over the 9600-baud link was slow and the replies were often
+//truncated, which then wrote a wrong value back into the register.
+static uint16_t reg_shadow[128];
+static uint8_t reg_page;					//selected via register 0x7F
+
+//cached settings - skip slow UART traffic if nothing changes
+#define RF_BW_UNKNOWN	0xFF
+static uint8_t curr_bw = RF_BW_UNKNOWN;
+static uint32_t curr_freq_val;				//0 = unknown
+
+//discard any stale bytes (and a pending overrun) left in the UART receiver
+static void flushRxRF(void)
+{
+	while (__HAL_UART_GET_FLAG(&huart4, UART_FLAG_RXNE) || __HAL_UART_GET_FLAG(&huart4, UART_FLAG_ORE))
+		(void)huart4.Instance->DR; //SR read followed by DR read clears RXNE and ORE
+}
+
 uint8_t setRegRF(uint8_t reg, uint16_t val)
 {
-	char data[20], rcv[5]={0};
-	uint8_t len;
+	char data[24], rcv[5]={0};
+	int len;
 
-	len = sprintf(data, "AT+POKE=%d,%d\r\n", reg, val);
-	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
+	len = snprintf(data, sizeof(data), "AT+POKE=%u,%u\r\n", reg, val);
+	flushRxRF();
+	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 50);
 	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 4, 50);
 
 	//dbg_print("[RF module] POKE %02X %04X reply: %s\n", reg, val, rcv);
 
+	if (reg == 0x7F)
+		reg_page = val & 1;
+	else if (reg_page == 0 && reg < sizeof(reg_shadow)/sizeof(reg_shadow[0]))
+		reg_shadow[reg] = val;
+
 	return strcmp(rcv, "OK\r\n")==0 ? 0 : 1;
 }
 
+//returns the last value written to a (page 0) register
 uint16_t getRegRF(uint8_t reg)
 {
-	char data[64], rcv[64]={0};
-	uint8_t len;
+	if (reg < sizeof(reg_shadow)/sizeof(reg_shadow[0]))
+		return reg_shadow[reg];
 
-	len = sprintf(data, "AT+PEEK=%d\r\n", reg);
-	HAL_UART_Transmit(&huart4, (uint8_t*)data, len, 25);
-	HAL_UART_Receive(&huart4, (uint8_t*)rcv, 64, 10);
-
-	//dbg_print("[RF module] PEEK %02X reply: %s\n", reg, rcv);
-
-	return atoi(rcv);
+	return 0;
 }
 
 void maskSetRegRF(uint8_t reg, uint16_t mask, uint16_t value)
@@ -44,9 +64,16 @@ void reloadRF(void)
 
 void setFreqRF(uint32_t freq, float corr)
 {
-	freq = (float)freq * (1.0f + corr/1e6);
+	//integer math - a float cannot hold a UHF frequency with 1 Hz resolution
+	int32_t offset = (int32_t)lroundf((float)freq * corr * 1e-6f);
+	uint32_t adj = (uint32_t)((int32_t)freq + offset);
 
-	uint32_t val = (freq / 1000.0f) * 16.0f;
+	//register unit is 1/16 kHz = 62.5 Hz -> adj*16/1000 = adj*2/125 (rounded)
+	uint32_t val = (adj * 2U + 62U) / 125U;
+
+	if (val == curr_freq_val)
+		return;
+
 	uint16_t fHi = (val >> 16) & 0xFFFF;
 	uint16_t fLo = val & 0xFFFF;
 
@@ -54,6 +81,8 @@ void setFreqRF(uint32_t freq, float corr)
 	setRegRF(0x2A, fLo);
 
 	reloadRF();
+
+	curr_freq_val = val;
 }
 
 void setRF(radio_state_t state)
@@ -64,6 +93,10 @@ void setRF(radio_state_t state)
 
 void chBwRF(ch_bw_t bw)
 {
+	//about 25 register writes at 9600 baud (~0.5 s) - skip if nothing changes
+	if (bw == curr_bw)
+		return;
+
 	if(bw==RF_BW_12K5)
 	{
 		setRegRF(0x15, 0x1100);
@@ -122,6 +155,8 @@ void chBwRF(ch_bw_t bw)
 	}
 
 	reloadRF(); //reload
+
+	curr_bw = bw;
 }
 
 void setModeRF(rf_mode_t mode)
@@ -153,15 +188,21 @@ void setModeRF(rf_mode_t mode)
 	reloadRF(); //reload
 }
 
-void initRF(dev_settings_t dev_settings)
+void initRF(const dev_settings_t *dev_settings)
 {
-	ch_settings_t ch_settings = dev_settings.channel;
+	const ch_settings_t *ch_settings = &dev_settings->channel;
 
-	uint32_t freq = ch_settings.rx_frequency;
-	float freq_corr = dev_settings.freq_corr;
-	ch_bw_t bw = ch_settings.ch_bw;
-	rf_mode_t mode = ch_settings.mode;
-	rf_power_t pwr = ch_settings.rf_pwr;
+	uint32_t freq = ch_settings->rx_frequency;
+	float freq_corr = dev_settings->freq_corr;
+	ch_bw_t bw = ch_settings->ch_bw;
+	rf_mode_t mode = ch_settings->mode;
+	rf_power_t pwr = ch_settings->rf_pwr;
+
+	//the module is reset below - forget all cached state
+	memset(reg_shadow, 0, sizeof(reg_shadow));
+	reg_page = 0;
+	curr_bw = RF_BW_UNKNOWN;
+	curr_freq_val = 0;
 
 	uint8_t data[64] = {0};
 
@@ -169,23 +210,22 @@ void initRF(dev_settings_t dev_settings)
 	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
 
 	//RF power
-	if(pwr==RF_PWR_LOW)
-		HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
-	else
-		HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
+	setPowerRF(pwr);
 
 	//turn on the module
 	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 1);
 	HAL_Delay(100);
 
+	flushRxRF();
 	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 20);
-	HAL_UART_Receive(&huart4, data, 64, 50); //naїve, blocking
+	HAL_UART_Receive(&huart4, data, sizeof(data)-1, 50); //naive, blocking
 
 	//display the received data
-	uint8_t len=strlen((char*)data);
+	size_t len=strlen((char*)data);
 	if(len)
 	{
-		data[strlen((char*)data)-2]=0;
+		if(len>=2)
+			data[len-2]=0; //strip CR/LF
 		dbg_print("[RF module] Version: %s\n", data);
 	}
 	else
@@ -276,13 +316,27 @@ void initRF(dev_settings_t dev_settings)
 	setRegRF(0x44, 0x00FF); //"RX voice volume", was 0x0022
 
 	//set frequency
-	dbg_print("[RF module] Setting frequency to %ldHz (%+d.%dppm)\n",
-			freq, (int8_t)freq_corr, (uint8_t)fabsf(10*freq_corr) - (int8_t)fabsf((int8_t)freq_corr*10.0f));
+	int32_t ppm10 = (int32_t)lroundf(freq_corr * 10.0f);
+	dbg_print("[RF module] Setting frequency to %luHz (%c%ld.%ldppm)\n",
+			freq, (ppm10<0)?'-':'+', labs(ppm10)/10, labs(ppm10)%10);
 	setFreqRF(freq, freq_corr);
 }
 
+//power the module down (RF_ENA drives the SA868 PD pin through Q3/Q2)
+//note: RF_PWR only selects high/low TX power, it does not switch the module off
 void shutdownRF(void)
 {
-	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
+	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);	//PTT inactive
+	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 0);	//module off
+
+	curr_bw = RF_BW_UNKNOWN;
+	curr_freq_val = 0;
+
 	dbg_print("[RF module] Shutdown\n");
+}
+
+//set the TX power level output (the SA868 H/L pin is pulled down for low power)
+void setPowerRF(rf_power_t pwr)
+{
+	HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, (pwr==RF_PWR_LOW) ? 1 : 0);
 }

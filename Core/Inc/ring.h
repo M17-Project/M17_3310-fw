@@ -4,15 +4,19 @@
 #include <stdint.h>
 #include "main.h"
 
-#define BSB_BUFF_SIZ (960*2)
+//RX baseband ring buffer, filled by ADC1 + DMA (circular) at 24 kHz
+//4096 samples = ~170 ms of slack for the main loop (must be even)
+#define BSB_BUFF_SIZ (2048*2)
 
 extern ADC_HandleTypeDef hadc1;
+extern TIM_HandleTypeDef htim8;
 
-extern uint16_t raw_bsb_buff[BSB_BUFF_SIZ];
-extern volatile uint16_t raw_bsb_buff_tail;
+void bsbRxStart(void);
+void bsbRxStop(void);
+void bsbRxDmaIrq(void);
 
-uint16_t demodGetHead(void);
-uint8_t demodIsOverrun(void);
+uint8_t demodCheckOverrun(void);
+void demodResync(void);
 uint16_t demodSamplesGetNum(void);
 uint16_t demodSamplePop(void);
 

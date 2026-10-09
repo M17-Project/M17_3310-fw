@@ -287,9 +287,9 @@ void enterState(disp_dev_t *disp_dev, disp_state_t state, abc_t *text_entry, dev
 				startBacklightTimer();
 			}
 
-			//TODO: make these non-blocking
+			//TODO: make the melody non-blocking
 			//playMelody(ringtones[0]);
-			actVibr(100);
+			actVibr(100); //non-blocking
 		break;
 
 		default:
@@ -323,23 +323,19 @@ void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settin
 	{
 		float val = atof(text_entry);
 		if (val > 1.0f)
-		{
 			dev_settings->channel.rf_pwr = RF_PWR_HIGH;
-			HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 0);
-		}
 		else
-		{
 			dev_settings->channel.rf_pwr = RF_PWR_LOW;
-			HAL_GPIO_WritePin(RF_PWR_GPIO_Port, RF_PWR_Pin, 1);
-		}
+
+		setPowerRF(dev_settings->channel.rf_pwr);
 	}
 	else if (edit_set == EDIT_M17_SRC_CALLSIGN)
 	{
-		strcpy(dev_settings->src_callsign, text_entry);
+		copyCallsign(dev_settings->src_callsign, sizeof(dev_settings->src_callsign), text_entry);
 	}
 	else if (edit_set == EDIT_M17_DST_CALLSIGN)
 	{
-		strcpy(dev_settings->channel.dst, text_entry);
+		copyCallsign(dev_settings->channel.dst, sizeof(dev_settings->channel.dst), text_entry);
 	}
 	else if (edit_set == EDIT_M17_CAN)
 	{
@@ -350,6 +346,7 @@ void leaveState(disp_state_t state, char *text_entry, dev_settings_t *dev_settin
 
 	dispClear(&disp_dev, COL_WHITE);
 	setString(&disp_dev, 0, 17, &nokia_big, "Saving...", COL_BLACK, ALIGN_CENTER);
+	dispFlush(&disp_dev); //show it now - the Flash write blocks for a while
 
 	saveData(dev_settings, sizeof(dev_settings_t));
 }

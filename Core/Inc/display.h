@@ -30,6 +30,7 @@ void dispWrite(disp_dev_t *disp_dev, uint8_t dc, uint8_t val);
 void dispInit(disp_dev_t *disp_dev);
 void dispGotoXY(disp_dev_t *disp_dev, uint8_t x, uint8_t y);
 void dispRefresh(disp_dev_t *disp_dev);
+void dispFlush(disp_dev_t *disp_dev);
 void dispClear(disp_dev_t *disp_dev, uint8_t color);
 void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set);
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color);

@@ -22,6 +22,8 @@
 #include "stm32f4xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+//fault handlers switch the RF module off (RF_ENA), so that a crash
+//can never leave the transmitter keyed
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -80,7 +82,7 @@ extern TIM_HandleTypeDef htim14;
 void NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
-
+  RF_ENA_GPIO_Port->BSRR = (uint32_t)RF_ENA_Pin << 16U; //transmitter off
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
    while (1)
@@ -95,7 +97,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+  RF_ENA_GPIO_Port->BSRR = (uint32_t)RF_ENA_Pin << 16U; //transmitter off
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -110,7 +112,7 @@ void HardFault_Handler(void)
 void MemManage_Handler(void)
 {
   /* USER CODE BEGIN MemoryManagement_IRQn 0 */
-
+  RF_ENA_GPIO_Port->BSRR = (uint32_t)RF_ENA_Pin << 16U; //transmitter off
   /* USER CODE END MemoryManagement_IRQn 0 */
   while (1)
   {
@@ -125,7 +127,7 @@ void MemManage_Handler(void)
 void BusFault_Handler(void)
 {
   /* USER CODE BEGIN BusFault_IRQn 0 */
-
+  RF_ENA_GPIO_Port->BSRR = (uint32_t)RF_ENA_Pin << 16U; //transmitter off
   /* USER CODE END BusFault_IRQn 0 */
   while (1)
   {
@@ -140,7 +142,7 @@ void BusFault_Handler(void)
 void UsageFault_Handler(void)
 {
   /* USER CODE BEGIN UsageFault_IRQn 0 */
-
+  RF_ENA_GPIO_Port->BSRR = (uint32_t)RF_ENA_Pin << 16U; //transmitter off
   /* USER CODE END UsageFault_IRQn 0 */
   while (1)
   {

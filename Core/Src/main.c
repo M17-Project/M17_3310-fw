@@ -37,6 +37,8 @@
 #include "usb_cmds.h"
 #include "text_entry.h"
 #include "debug.h"
+#include "m17_tx.h"
+#include "m17_rx.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -78,9 +80,6 @@ TIM_HandleTypeDef htim14;
 UART_HandleTypeDef huart4;
 
 /* USER CODE BEGIN PV */
-//timing
-uint32_t t_now, t_last;
-
 //display
 uint8_t disp_buff[DISP_BUFF_SIZ];
 disp_dev_t disp_dev;
@@ -93,10 +92,10 @@ uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item posit
 disp_state_t curr_disp_state = DISP_NONE;
 volatile disp_state_t pending_disp_state = DISP_NONE;
 
-//usb-related
+//usb-related (filled by CDC_Receive_FS)
 uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
 uint32_t usb_len;
-uint8_t usb_drdy;
+volatile uint8_t usb_drdy;
 
 //default channel settings
 const ch_settings_t def_channel =
@@ -137,32 +136,13 @@ extern codeplug_t codeplug;
 
 edit_set_t edit_set = EDIT_NONE;
 
-//M17
-uint16_t frame_samples[2][SYM_PER_FRA*10];	//sps=10
-int8_t frame_symbols[SYM_PER_FRA];
-lsf_t lsf_rx, lsf_tx;
-uint8_t frame_cnt;							//frame counter, preamble=0
-volatile uint8_t frame_pend;				//frame generation pending?
-volatile uint8_t bsb_tx_dma_half;
-uint8_t packet_payload[33*25];
-uint8_t packet_bytes;
-uint8_t payload[26];						//frame payload
-const uint16_t sms_max_len = sizeof(packet_payload)-1-1-2;
-uint8_t debug_flag;							//debug flag (for testing)
-
 //radio
 radio_state_t radio_state;
 
 //ADC
 volatile uint16_t batt_adc;
-float sw_corr_samples[8*5+5];				//samples for syncword search
-float pld_symbs[SYM_PER_PLD];				//payload symbols
 
-uint8_t sample_offset;						//location of the squared-L2 minimum
-uint8_t lsf_found, str_found, pkt_found;	//syncd with the incoming stream?
-
-//received message
-msg_t rcvd_msg;
+//received message display
 uint8_t rx_scroll;
 uint8_t rx_total_lines;
 /* USER CODE END PV */
@@ -191,65 +171,66 @@ static void MX_TIM3_Init(void);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 //messaging - initialize text packet transmission
-//note: some variables inside this function are global
 void initTextTX(const char *message)
 {
-	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
+	if (radio_state != RF_RX || m17TxActive())
+		return;
 
-	memset(payload, 0, 26);
+	dispClear(&disp_dev, COL_WHITE);
+	setString(&disp_dev, 0, 17, &nokia_big, "Sending...", COL_BLACK, ALIGN_CENTER);
+	dispFlush(&disp_dev);
 
-	uint16_t msg_len = strlen(message);
-	if (msg_len > sms_max_len)
-		msg_len = sms_max_len;
+	if (m17TxStart(message, &dev_settings) != 0)
+	{
+		dispClear(&disp_dev, COL_WHITE);
+		setString(&disp_dev, 0, 17, &nokia_big, "Bad call", COL_BLACK, ALIGN_CENTER);
+		dispFlush(&disp_dev);
+		HAL_Delay(1000);
 
-	packet_payload[0] = 0x05; //packet type: SMS
-
-	strncpy((char*)&packet_payload[1], message, msg_len);
-	packet_payload[msg_len+1] = 0; //null termination
-
-	uint16_t crc = CRC_M17(packet_payload, 1+msg_len+1);
-	packet_payload[msg_len+2] = crc>>8;
-	packet_payload[msg_len+3] = crc&0xFF;
-
-	packet_bytes = 1+msg_len+1+2; //type, payload, null termination, crc
-
-	radio_state = RF_TX;
-	setRF(radio_state);
-	//TODO: RF PTT line should work
-	//HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 0);
-
-	frame_cnt = 0;
-	frame_pend = 1;
+		curr_disp_state = DISP_MAIN_SCR;
+		showMainScreen(&disp_dev);
+	}
 }
 
-//initialize debug M17 transmission
-void initDebugTX(void)
+//battery indicator in the upper right corner of the main screen
+static void drawBattStatus(void)
 {
-	// start
-	HAL_ADC_Stop_DMA(&hadc1);
-	HAL_TIM_Base_Stop(&htim8); //stop 24kHz ADC baseband sample clock
+	//clear the upper right portion of the screen
+	drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, COL_WHITE, 1);
 
-	radio_state = RF_TX;
-	setRF(radio_state);
-	//TODO: RF PTT line should work
-	//HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 0);
+	//is the battery charging? (read /CHG signal)
+	if (isCharging())
+	{
+		setString(&disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT);
+	}
+	else
+	{
+		char u_batt_str[8];
+		uint16_t u_batt = getBattVoltage();
+		if (u_batt > 3500)
+			snprintf(u_batt_str, sizeof(u_batt_str), "%u.%u", u_batt/1000, (u_batt%1000)/100);
+		else
+			snprintf(u_batt_str, sizeof(u_batt_str), "Lo");
+		setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT);
+	}
+}
 
-	// ...then do this
-	HAL_Delay(10000);
+//sleep until the next interrupt if there is nothing to do
+//SysTick (1 ms), DMA, USB and timer interrupts wake the core up
+static void idleSleep(void)
+{
+	uint16_t batch = m17RxSamplesNeeded();
+	if (batch < 120) //process RX samples in batches of ~5 ms
+		batch = 120;
 
-	// cleanup
-    radio_state = RF_RX;
-    setRF(radio_state);
-    //TODO: RF PTT line should work
-    //HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
-
-    chBwRF(RF_BW_25K);
-
-    HAL_ADC_Stop_DMA(&hadc1);
-    raw_bsb_buff_tail = 0;
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&raw_bsb_buff, arrlen(raw_bsb_buff));
-    HAL_TIM_Base_Start(&htim8);
+	__disable_irq();
+	if (!m17TxRefillPending() && !usb_drdy && pending_disp_state == DISP_NONE &&
+		(radio_state != RF_RX || demodSamplesGetNum() < batch))
+	{
+		__DSB();
+		__WFI(); //a pending interrupt wakes the core even with PRIMASK set
+	}
+	__enable_irq();
 }
 /* USER CODE END 0 */
 
@@ -302,16 +283,16 @@ int main(void)
   SCB->CPACR |= ((3UL << 20U)|(3UL << 22U));  /* set CP10 and CP11 Full Access */
   #endif
 
-  //set baseband DAC to idle
-  HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
-  HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
-  HAL_TIM_Base_Start(&htim6); //48kHz - DAC (baseband out) timer for later DMA transfers
+  #ifdef DEBUG
+  DBGMCU->CR |= DBGMCU_CR_DBG_SLEEP; //keep the debugger connected during WFI
+  #endif
 
-  //start ADC sampling
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)&raw_bsb_buff, arrlen(raw_bsb_buff));
+  //set baseband DAC to idle (TIM6 runs only during transmissions)
+  m17TxInit();
+
+  //start battery voltage sampling
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)&batt_adc, 1);
   HAL_TIM_Base_Start(&htim3); // 5Hz for battery voltage sampling
-  HAL_TIM_Base_Start(&htim8); // 24kHz - ADC (baseband in)
 
   HAL_Delay(200);
 
@@ -319,6 +300,7 @@ int main(void)
   disp_dev = (disp_dev_t){&hspi1, disp_buff};
   dispInit(&disp_dev);
   dispClear(&disp_dev, 0);
+  dispFlush(&disp_dev);
   setBacklight(0);
 
   //load settings from NVMEM
@@ -339,13 +321,13 @@ int main(void)
 
   //init SA868S RF module
   radio_state = RF_RX;
-  initRF(dev_settings);
+  initRF(&dev_settings);
   setRF(radio_state);
   chBwRF(RF_BW_25K); //TODO: get rid of this workaround
 
-  //fill LSF
-  set_LSF(&lsf_tx, dev_settings.src_callsign, dev_settings.channel.dst,
-		  M17_TYPE_PACKET | M17_TYPE_CAN(dev_settings.channel.can), NULL);
+  //start baseband sampling (24kHz ADC)
+  m17RxReset();
+  bsbRxStart();
 
   //keypad timeout
   setKeysTimeout(dev_settings.kbd_timeout);
@@ -359,14 +341,21 @@ int main(void)
   //menu init
   curr_disp_state = DISP_MAIN_SCR;
   showMainScreen(&disp_dev);
+  dispFlush(&disp_dev);
+
+  //start the watchdog after the (slow) initialization
+  wdgInit();
+
+  uint32_t t_last = HAL_GetTick();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while(1)
   {
-	  //current tick
-	  t_now = HAL_GetTick();
+	  uint32_t t_now = HAL_GetTick();
+
+	  wdgKick();
 
 	  //get any pending transitions (triggered externally, not through the keypad)
 	  if (pending_disp_state != DISP_NONE)
@@ -383,347 +372,65 @@ int main(void)
 	  handleKey(&disp_dev, &curr_disp_state, &text_entry, &radio_state,
 			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
 
-	  //refresh main screen data
-	  if(t_now-t_last>=1000 && curr_disp_state==DISP_MAIN_SCR)
+	  //once per second
+	  if (t_now - t_last >= 1000)
 	  {
-		  //clear the upper right portion of the screen
-		  drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, COL_WHITE, 1);
+		  t_last = t_now;
 
-		  //is the battery charging? (read /CHG signal)
-		  if(!(CHG_GPIO_Port->IDR & CHG_Pin))
+		  if (radio_state == RF_RX)
 		  {
-			  setString(&disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT);
+			  //refresh main screen data
+			  if (curr_disp_state == DISP_MAIN_SCR)
+				  drawBattStatus();
+
+			  //protect the battery from deep discharge
+			  if (battCheckEmpty())
+			  {
+				  setBacklight(dev_settings.backlight_level);
+				  dispClear(&disp_dev, COL_WHITE);
+				  setString(&disp_dev, 0, 17, &nokia_big, "Batt empty", COL_BLACK, ALIGN_CENTER);
+				  dispFlush(&disp_dev);
+				  HAL_Delay(2000);
+				  powerOff();
+			  }
 		  }
-		  else
-		  {
-			  char u_batt_str[8];
-			  uint16_t u_batt = getBattVoltage();
-			  if(u_batt>3500)
-				  sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt-(u_batt/1000)*1000)/100);
-			  else
-				  sprintf(u_batt_str, "Lo");
-			  setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT);
-		  }
-
-		  t_last = HAL_GetTick();
 	  }
 
-	  //packet transfer triggered - start transmission
-	  if (frame_pend)
+	  //packet transmission in progress - refill the baseband buffer
+	  if (m17TxProcess())
 	  {
-	      const uint8_t warmup = 25;
-	      uint8_t N = (packet_bytes + 24) / 25;
+		  //done
+		  curr_disp_state = DISP_MAIN_SCR;
+		  showMainScreen(&disp_dev);
 
-	      if (frame_cnt == 0)
-	      {
-	          // first preamble frame (start DMA)
-	          dispClear(&disp_dev, 0);
-	          setString(&disp_dev, 0, 17, &nokia_big, "Sending...", COL_BLACK, ALIGN_CENTER);
-
-	          chBwRF(dev_settings.channel.ch_bw);
-
-	          uint32_t cnt = 0;
-	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-	          fltSymbolsPoly(&frame_samples[0][0], frame_symbols, rrc_taps_10_poly, 0);
-
-	          HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t *)&frame_samples[0][0],
-	                            2*SYM_PER_FRA*10, DAC_ALIGN_12B_R);
-	      }
-	      else if (frame_cnt < warmup)
-	      {
-	          // remaining preamble frames
-	          uint32_t cnt = 0;
-	          gen_preamble_i8(frame_symbols, &cnt, PREAM_LSF);
-	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
-	      }
-	      else if (frame_cnt == warmup)
-	      {
-	          // LSF frame
-	          gen_frame_i8(frame_symbols, NULL, FRAME_LSF, &lsf_tx, 0, 0);
-	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
-	      }
-	      else if (frame_cnt <= warmup + N)
-	      {
-	          // PKT frames (1..N)
-	          uint8_t index = frame_cnt - warmup - 1;
-
-	          uint16_t off = index * 25;
-	          uint16_t remaining = packet_bytes - off;
-
-	          memcpy(payload, &packet_payload[off], 25);
-	          if (remaining > 25)
-	              payload[25] = index << 2;
-	          else
-	              payload[25] = 0x80 | (remaining << 2);
-
-	          gen_frame_i8(frame_symbols, payload, FRAME_PKT, &lsf_tx, 0, 0);
-	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
-	      }
-	      else if (frame_cnt == warmup + N + 1)
-	      {
-	          // EOT frame
-	          uint32_t cnt = 0;
-	          gen_eot_i8(frame_symbols, &cnt);
-	          fltSymbolsPoly(&frame_samples[bsb_tx_dma_half][0], frame_symbols, rrc_taps_10_poly, 0);
-	      }
-	      else
-	      {
-	          // DONE — cleanup
-	          radio_state = RF_RX;
-	          setRF(radio_state);
-	          //TODO: RF PTT line should work
-	          //HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
-
-	          HAL_DAC_Stop_DMA(&hdac, DAC_CHANNEL_1);
-	          HAL_DAC_SetValue(&hdac, DAC_CHANNEL_1, DAC_ALIGN_12B_R, DAC_IDLE);
-
-	          frame_cnt = 0;
-	          curr_disp_state = DISP_MAIN_SCR;
-	          showMainScreen(&disp_dev);
-
-	          text_entry.buffer[0] = 0;
-	          text_entry.pos = 0;
-	          // keep the current text entry mode
-
-	          chBwRF(RF_BW_25K); // TODO: this is a workaround
-
-	          HAL_ADC_Stop_DMA(&hadc1);
-	          raw_bsb_buff_tail = 0;
-	          HAL_ADC_Start_DMA(&hadc1, (uint32_t *)&raw_bsb_buff, arrlen(raw_bsb_buff));
-	          HAL_TIM_Base_Start(&htim8);
-	      }
-
-	      frame_cnt++;
-	      frame_pend = 0;
+		  text_entry.buffer[0] = 0;
+		  text_entry.pos = 0;
+		  // keep the current text entry mode
 	  }
 
-	  //debug
-	  if (debug_flag)
-	  {
-		  //playMelody(ringtones[0]);
-		  initDebugTX();
-		  debug_flag = 0;
-	  }
-
-	  //received data over USB
-	  if(usb_drdy)
+	  //received data over USB (deferred while transmitting - Flash writes
+	  //and RF register access would disturb the transmission)
+	  if (usb_drdy && !m17TxActive())
 	  {
 		  parseUSB(&text_entry, usb_rx, usb_len);
-		  usb_drdy=0;
+		  usb_drdy = 0;
 	  }
 
-	  //tail==head - buffer overrun
-	  if (demodIsOverrun())
+	  //demodulate baseband samples
+	  if (radio_state == RF_RX && m17RxProcess())
 	  {
-	      dbg_print("[Debug] Baseband buffer overrun!\n");
+		  rx_scroll = 0;
+		  rx_total_lines = wrapLineStarts(&nokia_small, rcvd_msg.text, NULL, 0);
+
+		  pending_disp_state = DISP_TEXT_MSG_RCVD;
 	  }
 
-	  // repeat while there are baseband samples available
-	  while (demodSamplesGetNum() && radio_state==RF_RX)
-	  {
-		  //debug data dump over USB UART
-		  /*uint16_t b[BSB_BUFF_SIZ];
-		  for(uint16_t i=0; i<num_samples; i++)
-			  b[i] = demodSamplePop();
-		  CDC_Transmit_FS((uint8_t*)b, num_samples*sizeof(uint16_t));*/
+	  platformTick();
 
-		  if(!lsf_found && !str_found && !pkt_found)
-		  {
-			  //consume sample
-			  for(uint16_t i=0; i<arrlen(sw_corr_samples)-1; i++)
-				  sw_corr_samples[i]=sw_corr_samples[i+1];
-			  sw_corr_samples[arrlen(sw_corr_samples)-1] = -fltSample(demodSamplePop());
+	  //send the frame buffer to the display (if anything has changed)
+	  dispFlush(&disp_dev);
 
-			  //squared-L2 check against syncwords
-			  float symbols[8];
-			  for(uint8_t i=0; i<8; i++)
-				  symbols[i]=sw_corr_samples[i*5];
-
-			  //find LSF
-			  float dist = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
-			  if(dist < 2.5)
-			  {
-				  //find L2 minimum
-				  sample_offset = 0;
-				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
-				  {
-					  for(uint8_t j=0; j<8; j++)
-						  symbols[j]=sw_corr_samples[i+j*5];
-
-					  float d = sq_eucl_norm(symbols, lsf_sync_symbols, 8);
-
-					  if(d < dist)
-					  {
-						  sample_offset = i;
-						  dist = d;
-					  }
-				  }
-
-				  //dbg_print("[Debug] LSF syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
-
-				  lsf_found = 1;
-				  continue;
-			  }
-
-			  //find stream frame
-			  dist = sq_eucl_norm(symbols, str_sync_symbols, 8);
-			  if(dist < 2.5)
-			  {
-				  //find L2 minimum
-				  sample_offset = 0;
-				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
-				  {
-					  for(uint8_t j=0; j<8; j++)
-						  symbols[j]=sw_corr_samples[i+j*5];
-
-					  float d = sq_eucl_norm(symbols, str_sync_symbols, 8);
-
-					  if(d < dist)
-					  {
-						  sample_offset = i;
-						  dist = d;
-					  }
-				  }
-
-				  //dbg_print("[Debug] STR syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
-
-				  str_found = 1;
-				  continue;
-			  }
-
-			  //find stream frame
-			  dist = sq_eucl_norm(symbols, pkt_sync_symbols, 8);
-			  if(dist < 2.5)
-			  {
-				  //find L2 minimum
-				  sample_offset = 0;
-				  for (uint8_t i=1; i<=2; i++) //search further, up to floor(5/2)=2 symbols
-				  {
-					  for(uint8_t j=0; j<8; j++)
-						  symbols[j]=sw_corr_samples[i+j*5];
-
-					  float d = sq_eucl_norm(symbols, pkt_sync_symbols, 8);
-
-					  if(d < dist)
-					  {
-						  sample_offset = i;
-						  dist = d;
-					  }
-				  }
-
-				  //dbg_print("[Debug] PKT syncword found at offset %d, dist=%.1f\n", sample_offset, dist);
-
-				  pkt_found = 1;
-				  continue;
-			  }
-		  }
-		  else
-		  {
-			  if (demodSamplesGetNum() >= SYM_PER_PLD*5+sample_offset)
-			  {
-				  // we need to use the sample from sw_corr_samples[]
-				  pld_symbs[0] = sw_corr_samples[8*5+sample_offset];
-				  for (uint8_t i=0; i<sample_offset; i++)
-					  fltSample(demodSamplePop());
-
-				  // push the rest of the samples
-				  for (uint16_t i=1; i<SYM_PER_PLD-1; i++)
-				  {
-					  pld_symbs[i] = -fltSample(demodSamplePop());
-					  for (uint8_t j=0; j<4; j++)
-						  fltSample(demodSamplePop());
-				  }
-
-				  //decode stuff based on what it is
-				  if (lsf_found)
-				  {
-					  uint32_t e = decode_LSF(&lsf_rx, pld_symbs); // this func returns viterbi metric 'e'
-					  float err = (float)e/0xFFFFU;
-
-					  decode_callsign_bytes(rcvd_msg.dst, lsf_rx.dst);
-					  decode_callsign_bytes(rcvd_msg.src, lsf_rx.src);
-					  uint16_t type=((uint16_t)lsf_rx.type[0]<<8|lsf_rx.type[1]);
-					  uint8_t can=(type>>7)&0xFU;
-					  uint16_t crc=(((uint16_t)lsf_rx.crc[0]<<8)|lsf_rx.crc[1]);
-
-					  // if CRC matches data
-					  if (LSF_CRC(&lsf_rx)==crc)
-					  {
-						  dbg_print("[Debug] LSF received\n SRC: %s\n DST: %s\n TYPE: %04X\n CAN: %d\n META: ",
-								  rcvd_msg.src, rcvd_msg.dst, type, can);
-						  for (uint8_t i=0; i<sizeof(lsf_rx.meta); i++)
-							  dbg_print("%02X", lsf_rx.meta[i]);
-						  dbg_print("\n ERR %.1f\n", err);
-					  }
-
-					  lsf_found = 0;
-				  }
-				  else if (str_found)
-				  {
-					  uint8_t frame_data[16];
-					  uint8_t lich[5];
-					  uint16_t fn;
-					  uint8_t lich_cnt;
-					  decode_str_frame(frame_data, lich, &fn, &lich_cnt, pld_symbs);
-
-					  dbg_print("(%04X) ", fn);
-					  for (uint8_t i=0; i<16; i++)
-					  	  dbg_print("%02X", frame_data[i]);
-					  dbg_print("\n");
-
-					  str_found = 0;
-				  }
-				  else //pkt_found
-				  {
-					  uint8_t frame_data[25] = {0};
-					  uint8_t eof = 0;
-					  uint8_t fn = 0;
-					  static uint16_t wr_offs = 0;
-
-					  decode_pkt_frame(frame_data, &eof, &fn, pld_symbs);
-
-					  dbg_print("(%02X) ", fn);
-					  for (uint8_t i=0; i<25; i++)
-					  	  dbg_print("%02X", frame_data[i]);
-					  dbg_print("\n");
-
-					  if (!eof)
-					  {
-						  memcpy(&rcvd_msg.text[wr_offs], frame_data, 25);
-						  wr_offs += 25;
-					  }
-
-					  //display last message contents
-					  //we are using SRC/DST data from the last
-					  //correctly received LSF here, which might be wrong
-					  else
-					  {
-						  memcpy(&rcvd_msg.text[wr_offs], frame_data, fn);
-						  rcvd_msg.len = wr_offs + fn;
-
-						  if (rcvd_msg.text[0] == 0x05 && CRC_M17((uint8_t*)rcvd_msg.text, rcvd_msg.len)==0)
-						  {
-							  rcvd_msg.len -= 4;
-							  memmove(&rcvd_msg.text[0], &rcvd_msg.text[1], rcvd_msg.len+1); //include the null-term
-
-							  rx_scroll = 0;
-							  rx_total_lines = wrapLineStarts(&nokia_small, rcvd_msg.text, NULL, 0);
-
-							  pending_disp_state = DISP_TEXT_MSG_RCVD;
-						  }
-
-						  //TODO: this requires a timeout
-						  wr_offs = 0;
-					  }
-
-					  pkt_found = 0;
-				  }
-
-				  // work done: clear old syncword detection buffer
-				  memset(sw_corr_samples, 0, sizeof(sw_corr_samples));
-			  }
-		  }
-	  }
+	  idleSleep();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -755,7 +462,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
   RCC_OscInitStruct.PLL.PLLM = 4;
   RCC_OscInitStruct.PLL.PLLN = 168;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
   RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -768,10 +475,10 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
-  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
   {
     Error_Handler();
   }
@@ -1007,7 +714,7 @@ static void MX_SPI1_Init(void)
   hspi1.Init.CLKPolarity = SPI_POLARITY_LOW;
   hspi1.Init.CLKPhase = SPI_PHASE_1EDGE;
   hspi1.Init.NSS = SPI_NSS_SOFT;
-  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_64;
+  hspi1.Init.BaudRatePrescaler = SPI_BAUDRATEPRESCALER_32;
   hspi1.Init.FirstBit = SPI_FIRSTBIT_MSB;
   hspi1.Init.TIMode = SPI_TIMODE_DISABLE;
   hspi1.Init.CRCCalculation = SPI_CRCCALCULATION_DISABLE;
@@ -1298,7 +1005,7 @@ static void MX_TIM8_Init(void)
   htim8.Instance = TIM8;
   htim8.Init.Prescaler = 1-1;
   htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim8.Init.Period = 7000-1;
+  htim8.Init.Period = 3500-1;
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -1511,6 +1218,7 @@ void Error_Handler(void)
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
   __disable_irq();
+  RF_ENA_GPIO_Port->BSRR = (uint32_t)RF_ENA_Pin << 16U; //never leave the transmitter on
   while (1)
   {
   }

@@ -16,13 +16,12 @@ extern uint8_t saveData(const void *data, uint16_t size);
 
 extern dev_settings_t def_dev_settings;
 extern uint8_t menu_pos, menu_pos_hl;
-extern uint8_t debug_flag;
 
 extern codeplug_t codeplug;
 
 //text entry related
 void resetTextEntry(void);
-kbd_key_t scanKeys(radio_state_t radio_state, uint8_t rep);
+kbd_key_t scanKeys(radio_state_t radio_state, uint16_t rep);
 void pushCharBuffer(abc_t *text_entry, const char key_map[][KEYMAP_COLS], kbd_key_t key);
 void pushCharT9(abc_t *text_entry, kbd_key_t key);
 void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry,

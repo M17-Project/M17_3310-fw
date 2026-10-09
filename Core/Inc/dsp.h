@@ -10,6 +10,7 @@
 
 float fltSample(const uint16_t sample);
 void flushBsbFlt(void);
+void flushTxFlt(void);
 void fltSymbolsPoly(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict SYM_PER_FRA], const float* __restrict flt, uint8_t phase_inv);
 
 #endif /* INC_DSP_H_ */

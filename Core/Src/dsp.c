@@ -1,4 +1,5 @@
 #include "dsp.h"
+#include <string.h>
 
 //RX baseband filtering (sps=5)
 float fltSample(uint16_t sample)
@@ -38,19 +39,29 @@ float fltSample(uint16_t sample)
 	return acc * gain;
 }
 
-//flush RX baseband filter
+//flush RX baseband filter (fill it with mid-scale ADC samples, i.e. zero signal)
 void flushBsbFlt(void)
 {
 	for(uint_fast8_t i=0; i<41; i++)
-		fltSample(0);
+		fltSample(2048);
+}
+
+//TX filter history
+static float tx_sr[TAPS_PER_PHASE * 2];
+static uint8_t tx_w;
+
+//clear TX filter history (call before a new transmission)
+void flushTxFlt(void)
+{
+	memset(tx_sr, 0, sizeof(tx_sr));
+	tx_w = 0;
 }
 
 //faster TX baseband filtering (sps=10)
 void fltSymbolsPoly(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restrict SYM_PER_FRA], const float* __restrict flt, uint8_t phase_inv)
 {
-	//history
-	static float sr[TAPS_PER_PHASE * 2] = {0};
-	static uint8_t w = 0;
+	float * const sr = tx_sr;
+	uint8_t w = tx_w;
 
 	//precompute sign once
 	const float sign = phase_inv ? -1.0f : 1.0f;
@@ -96,4 +107,6 @@ void fltSymbolsPoly(uint16_t out[restrict SYM_PER_FRA*10], const int8_t in[restr
 		else
 			w--;
 	}
+
+	tx_w = w;
 }

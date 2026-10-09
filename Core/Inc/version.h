@@ -1,6 +1,6 @@
 #ifndef INC_VERSION_H_
 #define INC_VERSION_H_
 
-#define FW_VER "1.3.3"
+#define FW_VER "1.4.0"
 
 #endif /* INC_VERSION_H_ */

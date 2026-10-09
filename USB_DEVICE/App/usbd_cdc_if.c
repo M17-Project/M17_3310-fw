@@ -261,17 +261,67 @@ static int8_t CDC_Control_FS(uint8_t cmd, uint8_t* pbuf, uint16_t length)
 static int8_t CDC_Receive_FS(uint8_t* Buf, uint32_t *Len)
 {
   /* USER CODE BEGIN 6 */
-  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
-  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
-
   extern uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
   extern uint32_t usb_len;
-  extern uint8_t usb_drdy;
+  extern volatile uint8_t usb_drdy;
 
-  memcpy(usb_rx, Buf, *Len);
-  usb_rx[*Len] = 0; //null termination
-  usb_len = *Len;
-  usb_drdy = 1;
+  //assemble a command line - it may span several USB packets
+  //a command ends with CR/LF or with a short packet (end of a USB transfer)
+  static uint8_t line[300];
+  static uint16_t line_len;
+  static uint8_t line_ovf;
+  uint8_t complete = 0;
+
+  for (uint32_t i = 0; i < *Len; i++)
+  {
+    uint8_t c = Buf[i];
+
+    if (c == '\r' || c == '\n')
+    {
+      complete = 1;
+      continue; //strip line endings
+    }
+
+    if (complete) //data after a line ending: finish the previous line first
+    {
+      if (line_len && !line_ovf && !usb_drdy)
+      {
+        memcpy(usb_rx, line, line_len);
+        usb_rx[line_len] = 0;
+        usb_len = line_len;
+        usb_drdy = 1;
+      }
+      line_len = 0;
+      line_ovf = 0;
+      complete = 0;
+    }
+
+    if (line_len < sizeof(line))
+      line[line_len++] = c;
+    else
+      line_ovf = 1;
+  }
+
+  if (*Len < CDC_DATA_FS_MAX_PACKET_SIZE)
+    complete = 1;
+
+  //hand the line over to the main loop (dropped if it is still busy)
+  if (complete)
+  {
+    if (line_len && !line_ovf && !usb_drdy)
+    {
+      memcpy(usb_rx, line, line_len);
+      usb_rx[line_len] = 0; //null termination
+      usb_len = line_len;
+      usb_drdy = 1;
+    }
+    line_len = 0;
+    line_ovf = 0;
+  }
+
+  //re-arm the endpoint only after the data has been copied
+  USBD_CDC_SetRxBuffer(&hUsbDeviceFS, &Buf[0]);
+  USBD_CDC_ReceivePacket(&hUsbDeviceFS);
 
   return (USBD_OK);
   /* USER CODE END 6 */

@@ -36,7 +36,7 @@ uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uin
 
 		while (*w && *w != ' ')
 		{
-			ww += f->symbol[*w - ' '].width;
+			ww += fontGlyph(f, *w)->width;
 			w++;
 		}
 
@@ -52,7 +52,7 @@ uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uin
 		// consume word
 		while (*str && *str != ' ')
 		{
-			xp += f->symbol[*str - ' '].width;
+			xp += fontGlyph(f, *str)->width;
 			str++;
 		}
 	}
@@ -95,12 +95,29 @@ void dispGotoXY(disp_dev_t *disp_dev, uint8_t x, uint8_t y)
 	dispWrite(disp_dev, 0, 0x40|y);
 }
 
+//drawing functions only modify the frame buffer and mark it dirty,
+//dispFlush() sends it to the display in a single SPI burst
+static uint8_t disp_dirty;
+
 void dispRefresh(disp_dev_t *disp_dev)
 {
+	(void)disp_dev;
+	disp_dirty = 1;
+}
+
+void dispFlush(disp_dev_t *disp_dev)
+{
+	if (!disp_dirty)
+		return;
+	disp_dirty = 0;
+
 	dispGotoXY(disp_dev, 0, 0);
 
-	for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-		dispWrite(disp_dev, 1, disp_dev->buff[i]);
+	//the address auto-increments - send the whole frame at once
+	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, 1);
+	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 0);
+	HAL_SPI_Transmit(disp_dev->spi, disp_dev->buff, DISP_BUFF_SIZ, 50);
+	HAL_GPIO_WritePin(DISP_CE_GPIO_Port, DISP_CE_Pin, 1);
 }
 
 void dispClear(disp_dev_t *disp_dev, uint8_t color)
@@ -109,10 +126,7 @@ void dispClear(disp_dev_t *disp_dev, uint8_t color)
 
 	memset(disp_dev->buff, val, DISP_BUFF_SIZ);
 
-	dispGotoXY(disp_dev, 0, 0);
-
-	for(uint16_t i=0; i<DISP_BUFF_SIZ; i++)
-		dispWrite(disp_dev, 1, val);
+	disp_dirty = 1;
 }
 
 //set pixel
@@ -134,13 +148,13 @@ void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set)
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color)
 {
 	uint8_t h=f->height;
-	c-=' ';
+	const symbol_t *g = fontGlyph(f, c);
 
 	for(uint8_t i=0; i<h; i++)
 	{
-		for(uint8_t j=0; j<f->symbol[(uint8_t)c].width; j++)
+		for(uint8_t j=0; j<g->width; j++)
 		{
-			if(f->symbol[(uint8_t)c].rows[i] & 1<<(((h>8)?(h+3):(h))-1-j)) //fonts are right-aligned
+			if(g->rows[i] & 1<<(((h>8)?(h+3):(h))-1-j)) //fonts are right-aligned
 				setPixel(disp_dev, x+j, y+i, color);
 		}
 	}
@@ -154,7 +168,7 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, cons
 
 	//get width
 	for(uint8_t i=0; i<len; i++)
-		w+=f->symbol[str[i]-' '].width;
+		w+=fontGlyph(f, str[i])->width;
 
 	switch(align)
 	{
@@ -181,14 +195,14 @@ void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, cons
 
 	for(uint8_t i=0; i<len; i++)
 	{
-		if(xp > RES_X-f->symbol[str[i]-' '].width)
+		if(xp > RES_X-fontGlyph(f, str[i])->width)
 		{
 			y+=f->height+1;
 			xp=0; //ALIGN_LEFT
 		}
 
 		setChar(disp_dev, xp, y, f, str[i], color);
-		xp+=f->symbol[str[i]-' '].width;
+		xp+=fontGlyph(f, str[i])->width;
 	}
 
 	dispRefresh(disp_dev);
@@ -208,7 +222,7 @@ void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t 
 
 		while (w[wlen] && w[wlen] != ' ')
 		{
-			ww += f->symbol[w[wlen] - ' '].width;
+			ww += fontGlyph(f, w[wlen])->width;
 			wlen++;
 		}
 
@@ -223,7 +237,7 @@ void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t 
 		for (uint8_t i = 0; i < wlen; i++)
 		{
 			setChar(disp_dev, xp, y, f, str[i], color);
-			xp += f->symbol[str[i] - ' '].width;
+			xp += fontGlyph(f, str[i])->width;
 		}
 
 		// draw space
@@ -265,7 +279,7 @@ void setStringWordWrapFromLine(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const
 		while (*s && s != e)
 		{
 			setChar(disp_dev, xp, y, f, *s, color);
-			xp += f->symbol[*s - ' '].width;
+			xp += fontGlyph(f, *s)->width;
 			s++;
 		}
 
@@ -363,6 +377,7 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 	setString(disp_dev, 0, 9, &nokia_big, line1, COL_BLACK, ALIGN_CENTER);
 	setString(disp_dev, 0, 22, &nokia_big, line2, COL_BLACK, ALIGN_CENTER);
 	setString(disp_dev, 0, 40, &nokia_small, callsign, COL_BLACK, ALIGN_CENTER);
+	dispFlush(disp_dev);
 
 	//fade in
 	for(uint16_t i=0; i<dev_settings.backlight_level; i++)

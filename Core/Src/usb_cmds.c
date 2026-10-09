@@ -9,7 +9,8 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 	//"blt=VALUE"
 	if(strncmp((char*)str, "blt=", 4)==0)
 	{
-		dev_settings.backlight_timer=atoi(strstr((char*)str, "=")+1);
+		int t = atoi((char*)str+4);
+		dev_settings.backlight_timer = (t < 0) ? 0 : (t > 32) ? 32 : t;
 		saveData(&dev_settings, sizeof(dev_settings_t));
 		setBacklightTimer(dev_settings.backlight_timer);
 	}
@@ -68,7 +69,7 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 	//"src_call=STRING"
 	else if(len<=(9+9) && strncmp((char*)str, "src_call=", 9)==0)
 	{
-		strcpy(dev_settings.src_callsign, strstr((char*)str, "=")+1);
+		copyCallsign(dev_settings.src_callsign, sizeof(dev_settings.src_callsign), (char*)str+9);
 		saveData(&dev_settings, sizeof(dev_settings_t));
 	}
 
@@ -76,15 +77,20 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 	//"freq_corr=VALUE"
 	else if(strncmp((char*)str, "f_corr=", 7)==0)
 	{
-		dev_settings.freq_corr = atof(strstr((char*)str, "=")+1);
-		saveData(&dev_settings, sizeof(dev_settings_t));
+		float corr = atof((char*)str+7);
+		if (fabsf(corr) <= 50.0f)
+		{
+			dev_settings.freq_corr = corr;
+			setFreqRF(dev_settings.channel.rx_frequency, dev_settings.freq_corr);
+			saveData(&dev_settings, sizeof(dev_settings_t));
+		}
 	}
 
 	//send text message, 200 bytes max for now
 	//"msg=STRING"
 	else if(len<(4+200) && strncmp((char*)str, "msg=", 4)==0)
 	{
-		strcpy(text_entry->buffer, strstr((char*)str, "=")+1);
+		snprintf(text_entry->buffer, sizeof(text_entry->buffer), "%s", (char*)str+4);
 		initTextTX(text_entry->buffer);
 	}
 

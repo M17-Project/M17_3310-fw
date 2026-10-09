@@ -6,7 +6,8 @@ void playMelody(melody_t melody)
 	for (uint16_t i=0; i<melody.length; i++)
 	{
 		playBeep(melody.notes[i].frequency, melody.notes[i].duration);
-		HAL_Delay(melody.notes[i].gap-1);
+		if (melody.notes[i].gap > 1) //HAL_Delay(0-1) would block forever
+			HAL_Delay(melody.notes[i].gap-1);
 	}
 }
 

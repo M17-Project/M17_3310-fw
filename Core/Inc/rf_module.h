@@ -20,7 +20,8 @@ void setFreqRF(uint32_t freq, float corr);
 void setRF(radio_state_t state);
 void chBwRF(ch_bw_t bw);
 void setModeRF(rf_mode_t mode);
-void initRF(dev_settings_t dev_settings);
+void initRF(const dev_settings_t *dev_settings);
 void shutdownRF(void);
+void setPowerRF(rf_power_t pwr);
 
 #endif /* INC_RF_MODULE_H_ */
