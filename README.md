@@ -3,15 +3,13 @@
 Example firmware for the [Nokia 3310 M17 board](https://github.com/M17-Project/M17_3310).
 Together with the hardware, this experimental firmware allows sending text messages
 from the classic Nokia 3310 over the M17 network.
-> [!NOTE]
-> Packet reception is still work in progress.
 
 ## How to compile
 
 Clone this repository with all its submodules:
 
 ```
-git clone --recurse-submodules https://github.com/M17-Project/M17_3310-fw.git
+git clone --recursive https://github.com/M17-Project/M17_3310-fw.git
 ```
 
 To compile this firmware, you need to download and install the STM32CubeIDE first.
@@ -46,6 +44,6 @@ Finally, right-click again the topmost item (M17_3310-fw), then select "Build Co
 Now you can build everything with "Build Project".
 
 ## T9 support
-T9 text entry support is provided via our own standalone [library](https://github.com/M17-Project/M17_T9/tree/dev).
+T9 text entry support is provided via our own standalone [library](https://github.com/M17-Project/M17_T9).
 
 ![T9 text entry example](./Img/3310.jpg)
