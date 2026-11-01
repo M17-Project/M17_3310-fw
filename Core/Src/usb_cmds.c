@@ -51,6 +51,31 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 		dbg_print("%08lX <- 0x%02X\n", addr, val);
 	}
 
+	//set RF module's register
+	//"rfregset=ADDR val=VALUE" (decimal or 0x-prefixed hex)
+	else if(strncmp((char*)str, "rfregset=", 9)==0)
+	{
+		char *v = strstr((char*)str, "val=");
+
+		if (v == NULL)
+		{
+			dbg_print("[RF module] usage: rfregset=ADDR val=VALUE\n");
+		}
+		else
+		{
+			uint8_t addr = (uint8_t)strtoul((char*)str+9, NULL, 0);
+			uint16_t val = (uint16_t)strtoul(v+4, NULL, 0);
+
+			uint8_t err = setRegRF(addr, val);
+
+			//don't reload while page 1 may be selected - reloadRF() writes 0x30
+			if (addr != 0x7F)
+				reloadRF();
+
+			dbg_print("[RF module] %02X <- 0x%04X %s\n", addr, val, err ? "(no OK)" : "OK");
+		}
+	}
+
 	//load settings from nvmem
 	//"load"
 	else if(strncmp((char*)str, "load", 4)==0)
