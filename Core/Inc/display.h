@@ -15,6 +15,11 @@
 
 #define LCD_CONTRAST_DEFAULT	0x48
 
+//LCD configuration, sent as one block in the order the Nokia 3310 phone uses
+//(the genuine 3310 controller is PCD8544-like, but not identical)
+#define LCD_TEMPCO				0x06	//phone: 0x05
+#define LCD_BIAS				0x13	//phone: 0x14
+
 typedef struct __SPI_HandleTypeDef SPI_HandleTypeDef;
 typedef struct disp_dev_t
 {

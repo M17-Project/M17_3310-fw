@@ -437,7 +437,11 @@ static void getShift(char *out, uint8_t n)
 	if (dev_settings.ext.vfo.tx_frequency == dev_settings.ext.vfo.rx_frequency)
 		put(out, n, "Simplex");
 	else
-		fmtSignedMHz(out, n, (int32_t)(dev_settings.ext.vfo.tx_frequency - dev_settings.ext.vfo.rx_frequency));
+	{
+		char f[16];
+		fmtSignedMHz(f, sizeof(f), (int32_t)(dev_settings.ext.vfo.tx_frequency - dev_settings.ext.vfo.rx_frequency));
+		snprintf(out, n, "%sM", f); //MHz
+	}
 }
 
 static uint8_t setShift(const char *s)
@@ -909,16 +913,18 @@ static uint8_t setChFreq(const char *s, uint32_t *f)
 	return 0;
 }
 
+//RX: TX follows, keeping the shift (simplex stays simplex)
+//TX: only TX changes - that is how a split is set
 static uint8_t setChRx(const char *s)
 {
-	//a simplex channel stays simplex
 	ch_settings_t *c = editCh();
-	uint8_t simplex = (c->rx_frequency == c->tx_frequency);
+	int32_t shift = (int32_t)(c->tx_frequency - c->rx_frequency);
 
 	if (setChFreq(s, &c->rx_frequency))
 		return 1;
-	if (simplex)
-		c->tx_frequency = c->rx_frequency;
+
+	uint32_t tx = c->rx_frequency + shift;
+	c->tx_frequency = tuneFreqValid(tx) ? tx : c->rx_frequency;
 
 	return 0;
 }

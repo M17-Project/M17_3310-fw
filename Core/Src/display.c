@@ -28,20 +28,19 @@ void dispInit(disp_dev_t *disp_dev)
 	HAL_GPIO_WritePin(DISP_RST_GPIO_Port, DISP_RST_Pin, 1); //RES high
 	HAL_Delay(10);
 
-	dispWrite(disp_dev, 0, 0x21);			//extended commands
-	dispWrite(disp_dev, 0, 0x80|LCD_CONTRAST_DEFAULT);	//contrast (0x00 to 0x7F)
-	dispWrite(disp_dev, 0, 0x06);			//temp coeff.
-	dispWrite(disp_dev, 0, 0x13);			//LCD bias 1:48
-	dispWrite(disp_dev, 0, 0x20);			//standard commands
+	dispSetContrast(disp_dev, LCD_CONTRAST_DEFAULT);
 	dispWrite(disp_dev, 0, 0x0C);			//normal mode
 }
 
 //contrast (Vop): 0..127
+//the whole extended block is re-sent, Vop last - as the phone does it
 void dispSetContrast(disp_dev_t *disp_dev, uint8_t contrast)
 {
-	dispWrite(disp_dev, 0, 0x21);
-	dispWrite(disp_dev, 0, 0x80|(contrast & 0x7F));
-	dispWrite(disp_dev, 0, 0x20);
+	dispWrite(disp_dev, 0, 0x21);					//extended commands
+	dispWrite(disp_dev, 0, LCD_TEMPCO);				//temperature coefficient
+	dispWrite(disp_dev, 0, LCD_BIAS);				//bias
+	dispWrite(disp_dev, 0, 0x80|(contrast & 0x7F));	//Vop (contrast)
+	dispWrite(disp_dev, 0, 0x20);					//standard commands
 }
 
 void dispGotoXY(disp_dev_t *disp_dev, uint8_t x, uint8_t y)
@@ -442,7 +441,8 @@ void showMainScreen(disp_dev_t *disp_dev)
 		{
 			uint8_t l = strlen(str);
 			str[l++] = ' ';
-			fmtSignedMHz(&str[l], sizeof(str) - l, (int32_t)(ch->tx_frequency - ch->rx_frequency));
+			fmtSignedMHz(&str[l], sizeof(str) - l - 1, (int32_t)(ch->tx_frequency - ch->rx_frequency));
+			strcat(str, "M"); //MHz
 		}
 		setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 		setString(disp_dev, 0, 36, &nokia_small, dst, COL_BLACK, ALIGN_CENTER);

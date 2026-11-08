@@ -711,6 +711,14 @@ void uiHandleKey(kbd_key_t key)
 
 	backlightKick();
 
+	//any key silences a ringing alert - and does nothing else
+	//(except in the ringtone list, where the arrows scroll the previews)
+	if (ringtoneActive() && !(cur.state == DISP_OPTION_SELECT && edit_field == EDIT_RINGTONE))
+	{
+		ringtoneStop();
+		return;
+	}
+
 	//any key closes a popup
 	if (popup_on)
 	{
