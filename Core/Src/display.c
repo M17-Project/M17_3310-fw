@@ -426,30 +426,40 @@ void showMainScreen(disp_dev_t *disp_dev)
 
 	drawBattStatus(disp_dev);
 
+	char dst[16];
+	snprintf(dst, sizeof(dst), ICON_ARROW "%s", ch->dst);
+	ellipsize(&nokia_small, dst, RES_X);
+
+	uint8_t split = (ch->tx_frequency != ch->rx_frequency);
+
 	if (dev_settings.tuning_mode == TUNING_MEM)
 	{
+		//name, RX frequency (+ TX shift for a split channel), destination
 		drawCenteredFit(disp_dev, 12, ch->ch_name);
 
-		fmtFreq(&str[2], sizeof(str)-2, ch->rx_frequency);
-		str[0] = 'R'; str[1] = ' ';
+		fmtFreq(str, sizeof(str), ch->rx_frequency);
+		if (split)
+		{
+			uint8_t l = strlen(str);
+			str[l++] = ' ';
+			fmtSignedMHz(&str[l], sizeof(str) - l, (int32_t)(ch->tx_frequency - ch->rx_frequency));
+		}
 		setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
-
-		fmtFreq(&str[2], sizeof(str)-2, ch->tx_frequency);
-		str[0] = 'T';
-		setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+		setString(disp_dev, 0, 36, &nokia_small, dst, COL_BLACK, ALIGN_CENTER);
 	}
 	else
 	{
+		//RX frequency, destination, TX frequency only for a split
 		fmtFreq(str, sizeof(str), ch->rx_frequency);
 		drawCenteredFit(disp_dev, 12, str);
+		setString(disp_dev, 0, 27, &nokia_small, dst, COL_BLACK, ALIGN_CENTER);
 
-		fmtFreq(&str[2], sizeof(str)-2, ch->tx_frequency);
-		str[0] = 'T'; str[1] = ' ';
-		setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
-
-		snprintf(str, sizeof(str), ICON_ARROW "%s", ch->dst);
-		ellipsize(&nokia_small, str, RES_X);
-		setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+		if (split)
+		{
+			str[0] = 'T'; str[1] = ' ';
+			fmtFreq(&str[2], sizeof(str)-2, ch->tx_frequency);
+			setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+		}
 	}
 }
 

@@ -11,7 +11,7 @@
 //  VFO mode:    a copy of dev_settings.ext.vfo, kept in sync on every change
 //  memory mode: a copy of codeplug.channel[dev_settings.ch_num]
 //Per-channel edits (destination, CAN, RF power) made in memory mode are
-//written back to the codeplug in RAM only - it is not stored in Flash yet.
+//written back to the codeplug (codeplug.c), which is stored in Flash.
 
 #define VFO_STEP_DEFAULT	12500U
 
@@ -25,6 +25,7 @@ uint8_t tuneSelectChannel(uint16_t idx);	//switches to memory mode, 0 on success
 uint8_t tuneSetVfoFreq(uint32_t rx_hz);		//switches to VFO mode, keeps the TX shift
 uint8_t tuneSetVfoShift(int32_t shift_hz);
 void tuneChannelEdited(void);				//the active channel's parameters were changed
+void tuneChannelsChanged(void);				//codeplug channels were edited/added/deleted
 
 uint16_t tuneNumChannels(void);
 const char *tuneChannelName(uint16_t idx);

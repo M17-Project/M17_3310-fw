@@ -2,8 +2,7 @@
 #include <string.h>
 #include <stdio.h>
 #include "rf_module.h"
-
-extern codeplug_t codeplug;
+#include "codeplug.h"
 
 static dev_settings_t *ds;
 
@@ -62,7 +61,24 @@ void tuneChannelEdited(void)
 	if (ds->tuning_mode == TUNING_VFO)
 		ds->ext.vfo = ds->channel;
 	else if (ds->ch_num < tuneNumChannels())
+	{
 		codeplug.channel[ds->ch_num] = ds->channel;
+		codeplugTouch();
+	}
+}
+
+void tuneChannelsChanged(void)
+{
+	if (ds->tuning_mode == TUNING_MEM)
+	{
+		if (tuneNumChannels() == 0)
+			ds->tuning_mode = TUNING_VFO;
+		else if (ds->ch_num >= tuneNumChannels())
+			ds->ch_num = tuneNumChannels() - 1;
+	}
+
+	loadActive();
+	tuneApply();
 }
 
 void tuneStep(int8_t dir)

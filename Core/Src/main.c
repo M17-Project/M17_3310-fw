@@ -42,6 +42,7 @@
 #include "ui.h"
 #include "inbox.h"
 #include "tuning.h"
+#include "codeplug.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -136,9 +137,6 @@ dev_settings_t def_dev_settings =
 };
 
 dev_settings_t dev_settings;
-
-//codeplug
-extern codeplug_t codeplug;
 
 //radio
 radio_state_t radio_state;
@@ -242,6 +240,9 @@ int main(void)
   DBGMCU->CR |= DBGMCU_CR_DBG_SLEEP; //keep the debugger connected during WFI
   #endif
 
+  //12-bit backlight PWM
+  backlightInit();
+
   //set baseband DAC to idle (TIM6 runs only during transmissions)
   m17TxInit();
 
@@ -260,6 +261,7 @@ int main(void)
 
   //load settings from NVMEM
   loadDeviceSettings(&dev_settings, &def_dev_settings);
+  codeplugLoad();
   tuneInit(&dev_settings); //active channel: VFO or memory
   dispSetContrast(&disp_dev, dev_settings.ext.contrast);
 

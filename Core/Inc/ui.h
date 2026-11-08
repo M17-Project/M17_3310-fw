@@ -28,5 +28,8 @@ void uiActForward(void);
 void uiActDetails(void);
 void uiActSenderAsDst(void);
 void uiDeleteViewedMessage(void);
+void uiActChannelSelect(void);
+void uiDeleteEditedChannel(void);
+uint16_t uiEditChannel(void);				//channel picked in the Channels list
 
 #endif /* INC_UI_H_ */

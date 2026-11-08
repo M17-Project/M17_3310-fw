@@ -4,6 +4,10 @@
 #include "inbox.h"
 #include "msginfo.h"
 #include "menus.h"
+#include "codeplug.h"
+#include "display.h"
+
+extern disp_dev_t disp_dev;
 
 //USB control
 void parseUSB(uint8_t *str, uint32_t len)
@@ -155,6 +159,108 @@ void parseUSB(uint8_t *str, uint32_t len)
 			msgInfoText(m, info, sizeof(info));
 			dbg_print("--- #%u%s, TYPE=%04X\n%s\nText: %s\n", i+1, m->unread ? " (new)" : "",
 					m->type, info, m->text);
+		}
+	}
+
+	//list memory channels
+	//"ch?"
+	else if(strncmp((char*)str, "ch?", 3)==0)
+	{
+		dbg_print("[Codeplug] %u channel(s)\n", codeplug.num_items);
+		for(uint8_t i=0; i<codeplug.num_items; i++)
+		{
+			const ch_settings_t *c = &codeplug.channel[i];
+			dbg_print("%u: \"%s\" RX=%lu TX=%lu DST=%s CAN=%u PWR=%s\n", i+1, c->ch_name,
+					(unsigned long)c->rx_frequency, (unsigned long)c->tx_frequency, c->dst, c->can,
+					(c->rf_pwr==RF_PWR_HIGH) ? "high" : "low");
+		}
+	}
+
+	//add a memory channel (frequencies in MHz with a dot, kHz or Hz)
+	//"ch_add=NAME,RX,TX[,DST[,CAN]]"  e.g. "ch_add=Kyiv R1,439.4125,431.8125,@ALL,0"
+	else if(strncmp((char*)str, "ch_add=", 7)==0)
+	{
+		char buf[96];
+		char *f[5] = {0};
+		uint8_t n = 0;
+
+		snprintf(buf, sizeof(buf), "%s", (char*)str+7);
+		buf[strcspn(buf, "\r\n")] = 0;
+		for(char *p = strtok(buf, ","); p && n < 5; p = strtok(NULL, ","))
+			f[n++] = p;
+
+		ch_settings_t ch = dev_settings.ext.vfo;
+		uint32_t rx, tx;
+
+		if(n < 3 || parseFreq(f[1], &rx) || parseFreq(f[2], &tx) || !tuneFreqValid(rx) || !tuneFreqValid(tx))
+		{
+			dbg_print("[Codeplug] usage: ch_add=NAME,RX,TX[,DST[,CAN]]\n");
+		}
+		else
+		{
+			snprintf(ch.ch_name, sizeof(ch.ch_name), "%s", f[0]);
+			ch.rx_frequency = rx;
+			ch.tx_frequency = tx;
+			if(n > 3)
+				copyCallsign(ch.dst, sizeof(ch.dst), f[3]);
+			if(n > 4)
+				ch.can = atoi(f[4]) & 0xF;
+
+			int16_t idx = codeplugAdd(&ch);
+			if(idx < 0 || codeplugSave())
+				dbg_print("[Codeplug] Could not add the channel\n");
+			else
+				dbg_print("[Codeplug] Channel %d added\n", idx+1);
+			uiRefresh();
+		}
+	}
+
+	//delete a memory channel (1-based)
+	//"ch_del=N"
+	else if(strncmp((char*)str, "ch_del=", 7)==0)
+	{
+		int idx = atoi((char*)str+7) - 1;
+
+		if(idx < 0 || codeplugDelete(idx))
+		{
+			dbg_print("[Codeplug] No such channel\n");
+		}
+		else
+		{
+			if(dev_settings.tuning_mode == TUNING_MEM && dev_settings.ch_num > idx)
+				dev_settings.ch_num--;
+			codeplugSave();
+			tuneChannelsChanged();
+			saveData(&dev_settings, sizeof(dev_settings_t));
+			uiRefresh();
+			dbg_print("[Codeplug] Channel %d deleted\n", idx+1);
+		}
+	}
+
+	//LCD contrast 0..127 (not stored)
+	//"contrast=VALUE"
+	else if(strncmp((char*)str, "contrast=", 9)==0)
+	{
+		uint8_t c = atoi((char*)str+9) & 0x7F;
+		dispSetContrast(&disp_dev, c);
+		dbg_print("[LCD] Vop=%u\n", c);
+	}
+
+	//raw LCD command bytes, for testing the controller
+	//"lcd=0x21,0xC8,0x20"
+	else if(strncmp((char*)str, "lcd=", 4)==0)
+	{
+		char *p = (char*)str+4;
+
+		while(*p)
+		{
+			char *end;
+			uint8_t b = (uint8_t)strtoul(p, &end, 0);
+			if(end == p)
+				break;
+			dispWrite(&disp_dev, 0, b);
+			dbg_print("[LCD] cmd 0x%02X\n", b);
+			p = (*end == ',') ? end+1 : end;
 		}
 	}
 

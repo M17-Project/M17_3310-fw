@@ -50,13 +50,25 @@ static const note_t notes_vals[] =
 	{880.00, 600, 1}	// A5
 };
 
+//rising "incoming call" chime, 6 tones
+static const note_t notes_chime[] =
+{
+	{783.99, 70, 25},	// G5
+	{1046.50, 70, 25},	// C6
+	{1318.51, 70, 25},	// E6
+	{1567.98, 70, 25},	// G6
+	{1318.51, 70, 25},	// E6
+	{2093.00, 220, 1}	// C7
+};
+
 const melody_t ringtones[] =
 {
 	{"Off",			0,						NULL},
 	{"Beep",		arrlen(notes_beep),		notes_beep},
 	{"Mario",		arrlen(notes_mario),	notes_mario},
 	{"Fur Elise",	arrlen(notes_elise),	notes_elise},
-	{"Gran Vals",	arrlen(notes_vals),		notes_vals}
+	{"Gran Vals",	arrlen(notes_vals),		notes_vals},
+	{"Chime",		arrlen(notes_chime),	notes_chime}
 };
 
 const uint8_t ringtones_num = arrlen(ringtones);

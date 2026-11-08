@@ -13,6 +13,19 @@ uint8_t isCharging(void)
 	return (CHG_GPIO_Port->IDR & CHG_Pin) ? 0 : 1;
 }
 
+//backlight PWM: 12-bit instead of CubeMX's 8-bit, for usable low levels
+//TIM2 runs from the 84 MHz APB1 timer clock: 84 MHz / 2 / 4096 = 10.25 kHz
+#define BL_PWM_TOP		4095U
+
+void backlightInit(void)
+{
+	__HAL_TIM_DISABLE(&htim2);
+	TIM2->PSC = 2 - 1;
+	TIM2->ARR = BL_PWM_TOP;
+	TIM2->CCR3 = 0;
+	TIM2->EGR = TIM_EGR_UG;
+}
+
 //set backlight - 0..255
 void setBacklight(uint8_t level)
 {
@@ -24,8 +37,9 @@ void setBacklight(uint8_t level)
 		return;
 	}
 
-	//set intensity
-	TIM2->CCR3 = (uint16_t)level * (uint16_t)level / 255; //apply gamma correction
+	//set intensity (gamma 2), never fully off for level > 0
+	uint32_t duty = (uint32_t)level * level * BL_PWM_TOP / (255U * 255U);
+	TIM2->CCR3 = duty ? duty : 1;
 	if (TIM_CHANNEL_STATE_GET(&htim2, TIM_CHANNEL_3) != HAL_TIM_CHANNEL_STATE_BUSY)
 		HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);
 }

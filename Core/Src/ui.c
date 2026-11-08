@@ -18,6 +18,7 @@
 #include "msginfo.h"
 #include "charset.h"
 #include "m17_tx.h"
+#include "codeplug.h"
 
 #define UI_STACK_DEPTH		8
 #define SAVE_DELAY_MS		3000U	//deferred settings save
@@ -54,6 +55,8 @@ static char view_title[24];
 static char view_text[400];
 static uint16_t scroll;
 static uint8_t msg_deleted;
+static uint16_t edit_ch;						//channel picked in the Channels list
+static uint8_t ch_deleted;
 
 //popup
 static uint8_t popup_on;
@@ -128,6 +131,9 @@ static uint8_t listNum(void)
 	if (cur.state == DISP_OPTION_SELECT)
 		return fieldGet(edit_field)->opt_num();
 
+	if (cur.state == DISP_CHANNELS) //channels + "New channel"
+		return tuneNumChannels() + ((tuneNumChannels() < CH_MAX_NUM) ? 1 : 0);
+
 	if (isStaticMenu(cur.state))
 		return displays[cur.state].num_items;
 
@@ -185,6 +191,19 @@ static void inboxItem(uint8_t idx, char *label, char *value, uint8_t n)
 
 	utf8ToLocal(preview, sizeof(preview), m->text);
 	snprintf(label, n, "%s%s: %s", m->unread ? ICON_ENVELOPE : "   ", m->src, preview);
+}
+
+static void channelItem(uint8_t idx, char *label, char *value, uint8_t n)
+{
+	if (idx >= tuneNumChannels())
+	{
+		snprintf(label, n, "+ New channel");
+		return;
+	}
+
+	snprintf(label, n, "%u %s", idx + 1, tuneChannelName(idx));
+	if (dev_settings.tuning_mode == TUNING_MEM && dev_settings.ch_num == idx)
+		snprintf(value, n, ICON_RADIO_ON);
 }
 
 static void optionItem(uint8_t idx, char *label, char *value, uint8_t n)
@@ -293,6 +312,62 @@ void uiDeleteViewedMessage(void)
 	}
 }
 
+//--- channels ---
+uint16_t uiEditChannel(void)
+{
+	return edit_ch;
+}
+
+static void saveCodeplug(void)
+{
+	if (codeplugDirty())
+		codeplugSave();
+}
+
+static void openChannel(uint8_t idx)
+{
+	if (idx < tuneNumChannels())
+	{
+		edit_ch = idx;
+		push(DISP_CH_OPTIONS);
+		return;
+	}
+
+	//new channel: a copy of the VFO
+	ch_settings_t ch = dev_settings.ext.vfo;
+	snprintf(ch.ch_name, sizeof(ch.ch_name), "CH %u", tuneNumChannels() + 1);
+
+	int16_t n = codeplugAdd(&ch);
+	if (n < 0)
+		return;
+
+	saveCodeplug();
+	edit_ch = n;
+	cur.sel = n;
+	listFix(listNum());
+	push(DISP_CH_EDIT);
+}
+
+void uiActChannelSelect(void)
+{
+	tuneSelectChannel(edit_ch);
+	uiSaveNow();
+	goHome();
+}
+
+void uiDeleteEditedChannel(void)
+{
+	if (codeplugDelete(edit_ch))
+		return;
+
+	if (dev_settings.tuning_mode == TUNING_MEM && dev_settings.ch_num > edit_ch)
+		dev_settings.ch_num--;
+
+	tuneChannelsChanged();
+	uiSaveNow();
+	ch_deleted = 1;
+}
+
 //--- fields ---
 static void openField(edit_set_t e, const char *label, const char *initial)
 {
@@ -353,6 +428,7 @@ static void commitText(void)
 
 	if (f->save)
 		uiSaveNow();
+	saveCodeplug();
 
 	pop();
 }
@@ -364,14 +440,30 @@ static void commitOption(void)
 	uint8_t chosen = cur.sel;
 
 	msg_deleted = 0;
+	ch_deleted = 0;
 	f->opt_set(chosen);
 	if (f->opt_preview != NULL)
 		f->opt_preview(chosen, 0);
 
 	if (f->save)
 		uiSaveNow();
+	saveCodeplug();
 
 	pop();
+
+	if (edit_field == EDIT_CH_DELETE && ch_deleted)
+	{
+		if (cur.state == DISP_CH_OPTIONS) //back to the channel list
+			pop();
+		popup("Deleted", POPUP_MS);
+		return;
+	}
+
+	if (edit_field == EDIT_KBD_UKRAINIAN && chosen == 1)
+	{
+		popup("Writing: press # for \xE0\xE1\xE2 / \xC0\xC1\xC2", 2500);
+		return;
+	}
 
 	if (edit_field == EDIT_MSG_DELETE && msg_deleted)
 	{
@@ -432,6 +524,15 @@ static void redraw(void)
 		}
 		break;
 
+		case DISP_CHANNELS:
+		{
+			char t[20];
+			listFix(listNum());
+			snprintf(t, sizeof(t), "Channels (%u)", tuneNumChannels());
+			showList(dd, t, listNum(), cur.top, cur.sel, channelItem);
+		}
+		break;
+
 		case DISP_MSG_VIEW:
 		{
 			int16_t idx;
@@ -476,9 +577,14 @@ static void redraw(void)
 		default:
 			if (isStaticMenu(cur.state))
 			{
+				const char *title = displays[cur.state].title;
+
+				//channel menus: the channel's name as the title
+				if ((cur.state == DISP_CH_OPTIONS || cur.state == DISP_CH_EDIT) && edit_ch < tuneNumChannels())
+					title = tuneChannelName(edit_ch);
+
 				listFix(displays[cur.state].num_items);
-				showList(dd, displays[cur.state].title, displays[cur.state].num_items,
-						cur.top, cur.sel, menuItem);
+				showList(dd, title, displays[cur.state].num_items, cur.top, cur.sel, menuItem);
 			}
 			else
 			{
@@ -645,6 +751,15 @@ void uiHandleKey(kbd_key_t key)
 				pop();
 			}
 		}
+		break;
+
+		case DISP_CHANNELS:
+			if (key == KEY_LEFT || key == KEY_RIGHT)
+				listMove((key == KEY_LEFT) ? +1 : -1);
+			else if (key == KEY_OK)
+				openChannel(cur.sel);
+			else if (key == KEY_C)
+				pop();
 		break;
 
 		case DISP_INBOX:
@@ -837,6 +952,8 @@ void uiSecondTick(void)
 
 	if (cur.state == DISP_MAIN_SCR)
 		drawBattStatus(dd);
+	else if (cur.state == DISP_INFO || cur.state == DISP_MSG_VIEW || cur.state == DISP_TEXT_VIEW)
+		redraw(); //battery voltage, message age
 }
 
 void uiInit(disp_dev_t *disp)

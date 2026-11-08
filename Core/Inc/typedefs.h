@@ -6,12 +6,12 @@
 //text entry types
 typedef enum
 {
-	TEXT_LOWERCASE,
+	TEXT_LOWERCASE,			//# cycles through the allowed modes in this order
 	TEXT_UPPERCASE,
-	TEXT_T9,
-	TEXT_NUMERIC,
 	TEXT_UKR_LOWER,
 	TEXT_UKR_UPPER,
+	TEXT_T9,
+	TEXT_NUMERIC,
 
 	TEXT_NUM_MODES
 } text_entry_t;
@@ -118,6 +118,16 @@ typedef enum
 	EDIT_MSG_DELETE,
 	EDIT_INBOX_CLEAR,
 	EDIT_INFO_INBOX,
+
+	//channels (codeplug)
+	EDIT_CH_SELECT,
+	EDIT_CH_DELETE,
+	EDIT_CH_NAME,
+	EDIT_CH_RX,
+	EDIT_CH_TX,
+	EDIT_CH_DST,
+	EDIT_CH_CAN,
+	EDIT_CH_PWR,
 
 	//info (read only)
 	EDIT_INFO_FW,

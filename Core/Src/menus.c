@@ -19,6 +19,7 @@
 #include "charset.h"
 #include "ui.h"
 #include "nvmem.h"
+#include "codeplug.h"
 #include "version.h"
 #include "macros.h"
 
@@ -29,9 +30,9 @@ const disp_t displays[DISP_NUM_ITEMS] =
 {
 	[DISP_MAIN_MENU] =
 	{
-		"Main menu", 4,
-		{"Messages", "Settings", "Info", "Debug"},
-		{DISP_MESSAGES, DISP_SETTINGS, DISP_INFO, DISP_DEBUG},
+		"Main menu", 5,
+		{"Messages", "Channels", "Settings", "Info", "Debug"},
+		{DISP_MESSAGES, DISP_CHANNELS, DISP_SETTINGS, DISP_INFO, DISP_DEBUG},
 		{EDIT_NONE},
 		DISP_MAIN_SCR
 	},
@@ -54,6 +55,24 @@ const disp_t displays[DISP_NUM_ITEMS] =
 		DISP_MSG_VIEW
 	},
 
+	[DISP_CH_OPTIONS] =
+	{
+		"Channel", 3,
+		{"Select", "Edit", "Delete"},
+		{DISP_NONE, DISP_CH_EDIT, DISP_NONE},
+		{EDIT_CH_SELECT, EDIT_NONE, EDIT_CH_DELETE},
+		DISP_CHANNELS
+	},
+
+	[DISP_CH_EDIT] =
+	{
+		"Edit channel", 6,
+		{"Name", "RX freq.", "TX freq.", "Dest.", "CAN", "RF power"},
+		{DISP_NONE},
+		{EDIT_CH_NAME, EDIT_CH_RX, EDIT_CH_TX, EDIT_CH_DST, EDIT_CH_CAN, EDIT_CH_PWR},
+		DISP_CH_OPTIONS
+	},
+
 	[DISP_SETTINGS] =
 	{
 		"Settings", 5,
@@ -66,7 +85,7 @@ const disp_t displays[DISP_NUM_ITEMS] =
 	[DISP_RADIO_SETTINGS] =
 	{
 		"Radio settings", 7,
-		{"Mode", "Channel", "VFO freq.", "VFO step", "VFO shift", "Offset", "RF power"},
+		{"Mode", "Channel", "VFO freq.", "VFO step", "TX shift", "Offset", "RF power"},
 		{DISP_NONE},
 		{EDIT_TUNING_MODE, EDIT_MEM_CHANNEL, EDIT_VFO_FREQ, EDIT_VFO_STEP, EDIT_VFO_SHIFT, EDIT_RF_PPM, EDIT_RF_PWR},
 		DISP_SETTINGS
@@ -176,8 +195,15 @@ static void offOnName(uint8_t i, char *out, uint8_t n)
 static uint8_t cleanCallsign(char *out, const char *in, uint8_t allow_special)
 {
 	uint8_t n = 0;
+	const char *end = in + strlen(in);
 
-	for (; *in; in++)
+	//ignore spaces around (an extra tap on the 0 key)
+	while (*in == ' ')
+		in++;
+	while (end > in && end[-1] == ' ')
+		end--;
+
+	for (; in < end; in++)
 	{
 		char c = localToUpper(*in);
 
@@ -395,16 +421,30 @@ static void getStep(char *out, uint8_t n)
 	stepName(stepGet(), out, n);
 }
 
+//editor: empty for simplex (nothing to delete before typing a shift)
+static void getShiftEdit(char *out, uint8_t n)
+{
+	int32_t sh = (int32_t)(dev_settings.ext.vfo.tx_frequency - dev_settings.ext.vfo.rx_frequency);
+
+	if (sh == 0)
+		out[0] = 0;
+	else
+		fmtSignedMHz(out, n, sh);
+}
+
 static void getShift(char *out, uint8_t n)
 {
-	fmtSignedMHz(out, n, (int32_t)(dev_settings.ext.vfo.tx_frequency - dev_settings.ext.vfo.rx_frequency));
+	if (dev_settings.ext.vfo.tx_frequency == dev_settings.ext.vfo.rx_frequency)
+		put(out, n, "Simplex");
+	else
+		fmtSignedMHz(out, n, (int32_t)(dev_settings.ext.vfo.tx_frequency - dev_settings.ext.vfo.rx_frequency));
 }
 
 static uint8_t setShift(const char *s)
 {
-	int32_t hz;
+	int32_t hz = 0;
 
-	if (parseSignedMHz(s, &hz))
+	if (*s && parseSignedMHz(s, &hz)) //empty: simplex
 		return 1;
 
 	return tuneSetVfoShift(hz);
@@ -428,8 +468,8 @@ static void getEmpty(char *out, uint8_t n)
 }
 
 //--- display ---
-static const uint32_t bl_vals[] = {20, 60, 120, 200, 255};
-static const char *const bl_names[] = {"Min", "Low", "Mid", "High", "Max"};
+//roughly doubling the perceived brightness per step (setBacklight() applies gamma 2)
+static const uint32_t bl_vals[] = {3, 6, 12, 24, 45, 80, 140, 255};
 
 static uint8_t blNum(void)
 {
@@ -438,7 +478,7 @@ static uint8_t blNum(void)
 
 static void blName(uint8_t i, char *out, uint8_t n)
 {
-	put(out, n, bl_names[i]);
+	snprintf(out, n, "%u/%u", i + 1, (unsigned)arrlen(bl_vals));
 }
 
 static uint8_t blGet(void)
@@ -506,18 +546,25 @@ static void getBla(char *out, uint8_t n)
 	noYesName(blaGet(), out, n);
 }
 
-#define CONTRAST_MIN	40
-#define CONTRAST_STEP	4
-#define CONTRAST_NUM	16
+//the full Vop range: 0 should be blank, 127 black on a PCD8544
+#define CONTRAST_MIN	0
+#define CONTRAST_STEP	8
+#define CONTRAST_NUM	17
 
 static uint8_t conNum(void)
 {
 	return CONTRAST_NUM;
 }
 
+static uint8_t conValue(uint8_t i)
+{
+	uint16_t v = CONTRAST_MIN + i * CONTRAST_STEP;
+	return (v > 127) ? 127 : v;
+}
+
 static void conName(uint8_t i, char *out, uint8_t n)
 {
-	snprintf(out, n, "%u", CONTRAST_MIN + i * CONTRAST_STEP);
+	snprintf(out, n, "%u", conValue(i));
 }
 
 static uint8_t conGet(void)
@@ -528,13 +575,13 @@ static uint8_t conGet(void)
 
 static void conSet(uint8_t i)
 {
-	dev_settings.ext.contrast = CONTRAST_MIN + i * CONTRAST_STEP;
+	dev_settings.ext.contrast = conValue(i);
 	dispSetContrast(&disp_dev, dev_settings.ext.contrast);
 }
 
 static void conPreview(uint8_t i, uint8_t active)
 {
-	dispSetContrast(&disp_dev, active ? CONTRAST_MIN + i * CONTRAST_STEP : dev_settings.ext.contrast);
+	dispSetContrast(&disp_dev, active ? conValue(i) : dev_settings.ext.contrast);
 }
 
 static void getCon(char *out, uint8_t n)
@@ -801,12 +848,141 @@ static void getBatt(char *out, uint8_t n)
 {
 	uint16_t mv = getBattVoltage();
 
-	snprintf(out, n, "%s%u.%02uV", isCharging() ? "+" : "", mv / 1000, (mv % 1000) / 10);
+	snprintf(out, n, "%u.%02uV", mv / 1000, (mv % 1000) / 10);
 }
 
 static void getAuthor(char *out, uint8_t n)
 {
 	put(out, n, "SP5WWP");
+}
+
+//--- channels (the one picked in Channels, see uiEditChannel()) ---
+static ch_settings_t *editCh(void)
+{
+	uint16_t i = uiEditChannel();
+
+	return (i < codeplug.num_items) ? &codeplug.channel[i] : &codeplug.channel[0];
+}
+
+//a channel was changed: store it, update the radio if it is the active one
+static void chEdited(void)
+{
+	codeplugTouch();
+	if (dev_settings.tuning_mode == TUNING_MEM && dev_settings.ch_num == uiEditChannel())
+		tuneChannelsChanged();
+}
+
+static void getChName(char *out, uint8_t n)
+{
+	put(out, n, editCh()->ch_name);
+}
+
+static uint8_t setChName(const char *s)
+{
+	if (*s == 0)
+		return 1;
+
+	snprintf(editCh()->ch_name, sizeof(editCh()->ch_name), "%s", s);
+	chEdited();
+	return 0;
+}
+
+static void getChRx(char *out, uint8_t n)
+{
+	fmtFreq(out, n, editCh()->rx_frequency);
+}
+
+static void getChTx(char *out, uint8_t n)
+{
+	fmtFreq(out, n, editCh()->tx_frequency);
+}
+
+static uint8_t setChFreq(const char *s, uint32_t *f)
+{
+	uint32_t hz;
+
+	if (parseFreq(s, &hz) || !tuneFreqValid(hz))
+		return 1;
+
+	*f = hz;
+	chEdited();
+	return 0;
+}
+
+static uint8_t setChRx(const char *s)
+{
+	//a simplex channel stays simplex
+	ch_settings_t *c = editCh();
+	uint8_t simplex = (c->rx_frequency == c->tx_frequency);
+
+	if (setChFreq(s, &c->rx_frequency))
+		return 1;
+	if (simplex)
+		c->tx_frequency = c->rx_frequency;
+
+	return 0;
+}
+
+static uint8_t setChTx(const char *s)
+{
+	return setChFreq(s, &editCh()->tx_frequency);
+}
+
+static void getChDst(char *out, uint8_t n)
+{
+	put(out, n, editCh()->dst);
+}
+
+static uint8_t setChDst(const char *s)
+{
+	char c[10];
+
+	if (cleanCallsign(c, s, 1))
+		return 1;
+
+	copyCallsign(editCh()->dst, sizeof(editCh()->dst), c);
+	chEdited();
+	return 0;
+}
+
+static void getChCan(char *out, uint8_t n)
+{
+	snprintf(out, n, "%u", editCh()->can);
+}
+
+static uint8_t setChCan(const char *s)
+{
+	char *end;
+	long v = strtol(s, &end, 10);
+
+	if (*s == 0 || *end != 0 || v < 0 || v > 15)
+		return 1;
+
+	editCh()->can = (uint8_t)v;
+	chEdited();
+	return 0;
+}
+
+static uint8_t chPwrGet(void)
+{
+	return (editCh()->rf_pwr == RF_PWR_HIGH) ? 1 : 0;
+}
+
+static void chPwrSet(uint8_t i)
+{
+	editCh()->rf_pwr = i ? RF_PWR_HIGH : RF_PWR_LOW;
+	chEdited();
+}
+
+static void getChPwr(char *out, uint8_t n)
+{
+	pwrName(chPwrGet(), out, n);
+}
+
+static void chDelSet(uint8_t i)
+{
+	if (i)
+		uiDeleteEditedChannel();
 }
 
 //--- the table ---
@@ -833,7 +1009,7 @@ static const field_t fields[EDIT_NUM_ITEMS] =
 	[EDIT_MEM_CHANNEL]		= OPT_FIELD(getChan, chanNum, chanName, chanGet, chanSet, NULL),
 	[EDIT_VFO_FREQ]			= NUM_FIELD(getVfoFreq, NULL, setVfoFreq, 10, "MHz"),
 	[EDIT_VFO_STEP]			= OPT_FIELD(getStep, stepNum, stepName, stepGet, stepSet, NULL),
-	[EDIT_VFO_SHIFT]		= NUM_FIELD(getShift, NULL, setShift, 10, "Shift MHz"),
+	[EDIT_VFO_SHIFT]		= NUM_FIELD(getShift, getShiftEdit, setShift, 10, "Shift MHz"),
 	[EDIT_MEM_NUMBER]		= NUM_FIELD(getEmpty, NULL, setMemNumber, 3, "Channel"),
 
 	[EDIT_BL_LEVEL]			= OPT_FIELD(getBl, blNum, blName, blGet, blSet, blPreview),
@@ -846,7 +1022,8 @@ static const field_t fields[EDIT_NUM_ITEMS] =
 
 	[EDIT_KBD_TIMEOUT]		= OPT_FIELD(getKto, ktoNum, ktoName, ktoGet, ktoSet, NULL),
 	[EDIT_KBD_DELAY]		= OPT_FIELD(getKdl, kdlNum, kdlName, kdlGet, kdlSet, NULL),
-	[EDIT_KBD_UKRAINIAN]	= OPT_FIELD(getUkr, noYesNum, offOnName, ukrGet, ukrSet, NULL),
+	[EDIT_KBD_UKRAINIAN]	= { .kind = FK_OPTION, .title = "Ukrainian input", .get = getUkr, .opt_num = noYesNum,
+								.opt_name = offOnName, .opt_get = ukrGet, .opt_set = ukrSet, .save = 1 },
 
 	[EDIT_RINGTONE]			= OPT_FIELD(getRing, ringNum, ringName, ringGet, ringSet, ringPreview),
 	[EDIT_VIBRATION]		= OPT_FIELD(getVib, noYesNum, offOnName, vibGet, vibSet, vibPreview),
@@ -861,6 +1038,22 @@ static const field_t fields[EDIT_NUM_ITEMS] =
 	[EDIT_INBOX_CLEAR]		= { .kind = FK_OPTION, .title = "Delete all?", .opt_num = noYesNum, .opt_name = noYesName,
 								.opt_get = noGet, .opt_set = clearSet },
 	[EDIT_INFO_INBOX]		= INFO_FIELD(getInbox, NULL),
+
+	[EDIT_CH_SELECT]		= ACTION_FIELD(uiActChannelSelect),
+	[EDIT_CH_DELETE]		= { .kind = FK_OPTION, .title = "Delete?", .opt_num = noYesNum, .opt_name = noYesName,
+								.opt_get = noGet, .opt_set = chDelSet },
+	[EDIT_CH_NAME]			= { .kind = FK_TEXT, .title = "Name", .get = getChName, .set_text = setChName, .max_len = 23,
+								.modes = TM_ALL & ~TM(TEXT_T9), .first_mode = TEXT_UPPERCASE },
+	[EDIT_CH_RX]			= { .kind = FK_NUMBER, .title = "RX MHz", .get = getChRx, .set_text = setChRx, .max_len = 10,
+								.modes = TM(TEXT_NUMERIC), .first_mode = TEXT_NUMERIC },
+	[EDIT_CH_TX]			= { .kind = FK_NUMBER, .title = "TX MHz", .get = getChTx, .set_text = setChTx, .max_len = 10,
+								.modes = TM(TEXT_NUMERIC), .first_mode = TEXT_NUMERIC },
+	[EDIT_CH_DST]			= { .kind = FK_TEXT, .title = "Dest.", .get = getChDst, .set_text = setChDst, .max_len = 9,
+								.modes = CALL_MODES, .first_mode = TEXT_UPPERCASE },
+	[EDIT_CH_CAN]			= { .kind = FK_NUMBER, .title = "CAN", .get = getChCan, .set_text = setChCan, .max_len = 2,
+								.modes = TM(TEXT_NUMERIC), .first_mode = TEXT_NUMERIC },
+	[EDIT_CH_PWR]			= { .kind = FK_OPTION, .get = getChPwr, .opt_num = noYesNum, .opt_name = pwrName,
+								.opt_get = chPwrGet, .opt_set = chPwrSet },
 
 	[EDIT_INFO_FW]			= INFO_FIELD(getFw, NULL),
 	[EDIT_INFO_LIBM17]		= INFO_FIELD(getLibm17, NULL),
