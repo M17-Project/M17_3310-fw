@@ -199,6 +199,23 @@ void textEntryInit(abc_t *te, const char *initial, uint16_t max_len, uint8_t mod
 		}
 	}
 	te->buffer[te->pos] = 0;
+	te->cursor = te->pos;
+}
+
+//replace 'old_len' characters at 'start' with 'src' (shortened if needed)
+//returns the number of characters inserted
+static uint16_t replaceRange(abc_t *te, uint16_t start, uint16_t old_len, const char *src, uint16_t new_len)
+{
+	uint16_t tail = te->pos - (start + old_len);
+
+	if (start + new_len + tail > te->max_len)
+		new_len = te->max_len - start - tail;
+
+	memmove(&te->buffer[start + new_len], &te->buffer[start + old_len], tail + 1); //incl. terminator
+	memcpy(&te->buffer[start], src, new_len);
+	te->pos = start + new_len + tail;
+
+	return new_len;
 }
 
 //multi-tap character entry
@@ -213,10 +230,10 @@ static uint8_t pushCharBuffer(abc_t *te, text_entry_t map_mode, kbd_key_t key)
 
 	HAL_TIM_Base_Stop(&htim7);
 
-	//same key again before the timeout: cycle the last character
-	if (TIM7->CNT && key == te->last_key && map_len > 1 && te->pos > 0)
+	//same key again before the timeout: cycle the character left of the cursor
+	if (TIM7->CNT && key == te->last_key && map_len > 1 && te->cursor > 0)
 	{
-		char *last = &te->buffer[te->pos-1];
+		char *last = &te->buffer[te->cursor-1];
 		uint8_t i = 0;
 
 		while (i < map_len && chars[i] != *last)
@@ -227,8 +244,7 @@ static uint8_t pushCharBuffer(abc_t *te, text_entry_t map_mode, kbd_key_t key)
 	}
 	else if (te->pos < te->max_len)
 	{
-		te->buffer[te->pos++] = chars[0];
-		te->buffer[te->pos] = 0; //terminate!
+		te->cursor += replaceRange(te, te->cursor, 0, chars, 1); //insert at the cursor
 		changed = 1;
 	}
 
@@ -242,10 +258,12 @@ static uint8_t pushCharBuffer(abc_t *te, text_entry_t map_mode, kbd_key_t key)
 	return changed;
 }
 
-//T9 predictive entry
+//T9 predictive entry (the word being typed ends at the cursor)
 static uint8_t pushCharT9(abc_t *te, kbd_key_t key)
 {
 	char c = (key != KEY_ASTERISK) ? ('2' + key - KEY_2) : '*';
+	char word[sizeof(t9.code) + 1];
+	uint16_t l;
 
 	// first T9 digit
 	if (t9.code_len == 0)
@@ -253,30 +271,28 @@ static uint8_t pushCharT9(abc_t *te, kbd_key_t key)
 		if (te->pos >= te->max_len)
 			return 0;
 
-		t9.start_pos = te->pos;
+		t9.start_pos = te->cursor;
 		t9.last_len  = 0;
 	}
 
 	const char *w = addCode(c);
-	uint16_t room = te->max_len - t9.start_pos;
 
 	if (*w)
 	{
-		uint16_t l = strlen(w);
-		if (l > room)
-			l = room;
-
-		memcpy(&te->buffer[t9.start_pos], w, l);
-		t9.last_len = l;
+		l = strlen(w);
+		if (l > sizeof(word) - 1)
+			l = sizeof(word) - 1;
+		memcpy(word, w, l);
 	}
-	else if (t9.last_len < room)
+	else //no such word: the previous one + '?'
 	{
-		te->buffer[t9.start_pos + t9.last_len] = '?';
-		t9.last_len++;
+		l = (t9.last_len < sizeof(word) - 1) ? t9.last_len : sizeof(word) - 2;
+		memcpy(word, &te->buffer[t9.start_pos], l);
+		word[l++] = '?';
 	}
 
-	te->buffer[t9.start_pos + t9.last_len] = 0;
-	te->pos = t9.start_pos + t9.last_len;
+	t9.last_len = replaceRange(te, t9.start_pos, t9.last_len, word, l);
+	te->cursor = t9.start_pos + t9.last_len;
 
 	return 1;
 }
@@ -304,10 +320,26 @@ uint8_t textEntryBackspace(abc_t *te)
 	clearCode();
 	stopMultiTap(te);
 
-	if (te->pos == 0)
+	if (te->cursor == 0)
 		return 0;
 
-	te->buffer[--te->pos] = 0;
+	te->cursor--;
+	replaceRange(te, te->cursor, 1, "", 0);
+
+	return 1;
+}
+
+uint8_t textEntryCursor(abc_t *te, int8_t dir)
+{
+	clearCode();
+	stopMultiTap(te);
+
+	if (dir < 0 && te->cursor > 0)
+		te->cursor--;
+	else if (dir > 0 && te->cursor < te->pos)
+		te->cursor++;
+	else
+		return 0;
 
 	return 1;
 }

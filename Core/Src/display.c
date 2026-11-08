@@ -481,10 +481,37 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 	}
 }
 
+//Nokia-style scroll bar on the right: dotted track, solid slider at the selected item
+#define SCROLL_W		3		//slider width
+#define SCROLL_GAP		2		//space between the list and the bar
+#define SCROLL_Y0		8
+#define SCROLL_Y1		(RES_Y-1)
+
+static void drawScrollBar(disp_dev_t *disp_dev, uint8_t num, uint8_t sel)
+{
+	const uint8_t x = RES_X - SCROLL_W;
+	const uint8_t track = SCROLL_Y1 - SCROLL_Y0 + 1;
+
+	//track: dotted centre line
+	for (uint8_t y=SCROLL_Y0; y<=SCROLL_Y1; y+=2)
+		setPixel(disp_dev, x + SCROLL_W/2, y, COL_BLACK);
+
+	//slider: proportional to the visible part, at least 5 px
+	uint8_t h = (uint16_t)track * LIST_ROWS / num;
+	if (h < 5)
+		h = 5;
+
+	uint8_t y = SCROLL_Y0 + (uint16_t)(track - h) * sel / (num - 1);
+	drawRect(disp_dev, x, y, RES_X-1, y + h - 1, COL_BLACK, 1);
+}
+
 //list with a bold title and LIST_ROWS rows, 'sel' is highlighted
+//a scroll bar is shown when not all items fit
 void showList(disp_dev_t *disp_dev, const char *title, uint8_t num, uint8_t top, uint8_t sel, list_item_fn item)
 {
 	char t[32];
+	uint8_t scroll = (num > LIST_ROWS);
+	uint8_t right = scroll ? RES_X - SCROLL_W - SCROLL_GAP : RES_X;	//usable width
 
 	dispClear(disp_dev, COL_WHITE);
 
@@ -503,7 +530,7 @@ void showList(disp_dev_t *disp_dev, const char *title, uint8_t num, uint8_t top,
 
 		if (top+i == sel)
 		{
-			drawRect(disp_dev, 0, y-1, RES_X-1, y+8, COL_BLACK, 1);
+			drawRect(disp_dev, 0, y-1, right-1, y+8, COL_BLACK, 1);
 			col = COL_WHITE;
 		}
 
@@ -512,14 +539,17 @@ void showList(disp_dev_t *disp_dev, const char *title, uint8_t num, uint8_t top,
 		if (value[0])
 		{
 			uint16_t lw = stringWidth(&nokia_small, label);
-			uint8_t max_vw = (lw + 4 < RES_X - RES_X/3) ? RES_X - lw - 4 : RES_X/3;
+			uint8_t max_vw = (lw + 3 < right - right/3) ? right - lw - 3 : right/3;
 			ellipsize(&nokia_small, value, max_vw);
 			vw = stringWidth(&nokia_small, value);
-			setString(disp_dev, 0, y, &nokia_small, value, col, ALIGN_RIGHT);
+			setString(disp_dev, right - vw, y, &nokia_small, value, col, ALIGN_ARB);
 		}
 
-		setStringClip(disp_dev, 1, y, &nokia_small, label, col, RES_X - 1 - (vw ? vw + 3 : 0));
+		setStringClip(disp_dev, 1, y, &nokia_small, label, col, right - 1 - (vw ? vw + 2 : 0));
 	}
+
+	if (scroll)
+		drawScrollBar(disp_dev, num, sel);
 
 	dispRefresh(disp_dev);
 }
@@ -550,8 +580,52 @@ static void drawEntryHeader(disp_dev_t *disp_dev, text_entry_t mode, const char 
 	}
 }
 
-//single value: big font, the end of the text is always visible, with a cursor
-void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *title, const char *text)
+#define CURSOR_GAP	2		//extra pixels opened in the text at the cursor
+
+//draw n characters, returns the end x position
+static uint8_t drawSpan(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *s, uint16_t n)
+{
+	while (n-- && *s)
+	{
+		setChar(disp_dev, x, y, f, *s, COL_BLACK);
+		x += fontGlyph(f, *s++)->width;
+	}
+
+	return x;
+}
+
+//one line with the cursor: text before it, a bar with a gap on each side, the rest
+static void drawCursorLine(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f,
+		const char *s, uint16_t len, uint16_t cur, uint8_t max_x)
+{
+	x = drawSpan(disp_dev, x, y, f, s, cur);
+	drawRect(disp_dev, x, y, x, y + f->height - 1, COL_BLACK, 1);
+	x += CURSOR_GAP;
+
+	for (s += cur, len -= cur; len && *s; len--, s++)
+	{
+		uint8_t w = fontGlyph(f, *s)->width;
+		if (x + w > max_x)
+			break;
+		setChar(disp_dev, x, y, f, *s, COL_BLACK);
+		x += w;
+	}
+
+	dispRefresh(disp_dev);
+}
+
+static uint16_t widthN(const font_t *f, const char *s, uint16_t n)
+{
+	uint16_t w = 0;
+
+	while (n-- && *s)
+		w += fontGlyph(f, *s++)->width;
+
+	return w;
+}
+
+//single value: one line, scrolled horizontally so that the cursor is visible
+void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *title, const char *text, uint16_t cursor)
 {
 	const uint8_t box_w = RES_X - 7;
 
@@ -563,29 +637,103 @@ void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *tit
 	const font_t *f = needsCyrillic(&nokia_big, text) ? &nokia_small : &nokia_big;
 	uint8_t y = (f == &nokia_big) ? 13 : 17;
 
-	//skip leading characters until the rest fits
-	const char *t = text;
-	while (*t && stringWidth(f, t) > box_w)
-		t++;
+	//first visible character: the text up to the cursor has to fit
+	uint16_t len = strlen(text);
+	if (cursor > len)
+		cursor = len;
 
-	uint8_t x = setStringClip(disp_dev, 3, y, f, t, COL_BLACK, box_w);
-	drawRect(disp_dev, x, y, x, y + f->height - 1, COL_BLACK, 1); //cursor
+	uint16_t start = 0;
+	while (start < cursor && widthN(f, &text[start], cursor - start) > box_w - CURSOR_GAP)
+		start++;
+
+	drawCursorLine(disp_dev, 3, y, f, &text[start], len - start, cursor - start, 3 + box_w);
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Ok", COL_BLACK, ALIGN_CENTER);
 }
 
-//text message: the last 3 lines are visible
-void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *dst, const char *text)
+//find the wrapped line holding the cursor: line index and offset in the line
+//(the line index may be one past the last line: cursor after a wrapping space)
+static uint16_t locateCursor(const font_t *f, const char *text, uint16_t cursor, uint16_t *off)
+{
+	const char *p = text;
+	const char *start;
+	uint8_t len;
+	uint16_t line = 0;
+
+	*off = 0;
+
+	while (*p)
+	{
+		p = wrapLine(f, p, &start, &len);
+
+		if (len == 0 && *start == 0)
+			break;
+
+		uint16_t so = start - text;
+
+		if (cursor <= so + len)
+		{
+			*off = (cursor > so) ? cursor - so : 0;
+			return line;
+		}
+
+		line++;
+	}
+
+	return line;
+}
+
+//text message: 3 lines, scrolled so that the cursor line is visible
+void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *dst, const char *text, uint16_t cursor)
 {
 	char to[16];
+	uint16_t off;
 
 	dispClear(disp_dev, COL_WHITE);
 
 	snprintf(to, sizeof(to), ICON_ARROW "%s", dst);
 	drawEntryHeader(disp_dev, mode, to);
 
-	uint16_t total = countLines(&nokia_small, text);
-	drawWrapped(disp_dev, 0, 10, &nokia_small, text, COL_BLACK, (total > 3) ? total - 3 : 0, 3);
+	const font_t *f = &nokia_small;
+	uint16_t cline = locateCursor(f, text, cursor, &off);
+	uint16_t first = (cline > 2) ? cline - 2 : 0;
+
+	const char *p = text;
+	const char *start;
+	uint8_t len;
+	uint16_t line = 0;
+	uint8_t y = 10;
+
+	while (line < first + 3)
+	{
+		uint8_t empty = (*p == 0);
+
+		if (!empty)
+		{
+			p = wrapLine(f, p, &start, &len);
+			if (len == 0 && *start == 0)
+				empty = 1;
+		}
+
+		if (empty) //past the end: only the cursor can be here
+		{
+			start = "";
+			len = 0;
+		}
+
+		if (line >= first)
+		{
+			if (line == cline)
+				drawCursorLine(disp_dev, 0, y, f, start, len, off, RES_X);
+			else
+				drawSpan(disp_dev, 0, y, f, start, len);
+			y += f->height + 1;
+		}
+
+		if (empty && line >= cline)
+			break;
+		line++;
+	}
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", COL_BLACK, ALIGN_CENTER);
 }

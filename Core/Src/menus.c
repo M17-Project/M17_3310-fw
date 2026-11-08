@@ -85,7 +85,7 @@ const disp_t displays[DISP_NUM_ITEMS] =
 	[DISP_RADIO_SETTINGS] =
 	{
 		"Radio settings", 7,
-		{"Mode", "Channel", "VFO freq.", "VFO step", "TX shift", "Offset", "RF power"},
+		{"Mode", "Channel", "VFO freq", "VFO step", "TX shift", "Offset", "RF power"},
 		{DISP_NONE},
 		{EDIT_TUNING_MODE, EDIT_MEM_CHANNEL, EDIT_VFO_FREQ, EDIT_VFO_STEP, EDIT_VFO_SHIFT, EDIT_RF_PPM, EDIT_RF_PWR},
 		DISP_SETTINGS

@@ -15,7 +15,8 @@ void setKeysTimeout(uint16_t delay);		//multi-tap timeout, ms
 //text entry
 void textEntryInit(abc_t *te, const char *initial, uint16_t max_len, uint8_t modes, text_entry_t mode);
 uint8_t textEntryKey(abc_t *te, kbd_key_t key);		//keys 1..9, *, 0 - returns 1 if the text changed
-uint8_t textEntryBackspace(abc_t *te);				//returns 0 if there was nothing to delete
+uint8_t textEntryBackspace(abc_t *te);				//deletes left of the cursor, 0 if nothing was deleted
+uint8_t textEntryCursor(abc_t *te, int8_t dir);		//move the cursor, returns 1 if it moved
 void textEntryNextMode(abc_t *te);					//# key
 void textEntryConfirm(abc_t *te);					//finish the current character / T9 word
 void resetTextEntry(void);

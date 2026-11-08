@@ -559,11 +559,11 @@ static void redraw(void)
 		break;
 
 		case DISP_TEXT_MSG_ENTRY:
-			showTextMessageEntry(dd, te.mode, compose_dst, te.buffer);
+			showTextMessageEntry(dd, te.mode, compose_dst, te.buffer, te.cursor);
 		break;
 
 		case DISP_TEXT_VALUE_ENTRY:
-			showTextValueEntry(dd, te.mode, edit_title, te.buffer);
+			showTextValueEntry(dd, te.mode, edit_title, te.buffer, te.cursor);
 		break;
 
 		case DISP_OPTION_SELECT:
@@ -678,8 +678,9 @@ static void keyTextEntry(kbd_key_t key)
 		break;
 
 		case KEY_C:
-			if (!textEntryBackspace(&te))
-				pop(); //empty: cancel
+			//delete left of the cursor; on an empty field: cancel
+			if (!textEntryBackspace(&te) && te.pos == 0)
+				pop();
 		break;
 
 		case KEY_HASH:
@@ -690,9 +691,11 @@ static void keyTextEntry(kbd_key_t key)
 
 		case KEY_RIGHT:
 			textEntryConfirm(&te);
+			textEntryCursor(&te, +1);
 		break;
 
 		case KEY_LEFT:
+			textEntryCursor(&te, -1);
 		break;
 
 		default:

@@ -57,8 +57,8 @@ void drawBattStatus(disp_dev_t *disp_dev);
 void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, const char *callsign);
 void showList(disp_dev_t *disp_dev, const char *title, uint8_t num, uint8_t top, uint8_t sel, list_item_fn item);
 void showPopup(disp_dev_t *disp_dev, const char *text);
-void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *title, const char *text);
-void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *dst, const char *text);
+void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *title, const char *text, uint16_t cursor);
+void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *dst, const char *text, uint16_t cursor);
 void showMessageView(disp_dev_t *disp_dev, const char *src, const char *dst, const char *age,
 		const char *text, uint16_t scroll, uint8_t idx, uint8_t total);
 void showNotify(disp_dev_t *disp_dev, const char *src, uint8_t unread);
