@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include "main.h"
 #include "typedefs.h"
 #include "settings.h"
 #include "debug.h"
@@ -23,5 +24,8 @@ void setModeRF(rf_mode_t mode);
 void initRF(const dev_settings_t *dev_settings);
 void shutdownRF(void);
 void setPowerRF(rf_power_t pwr);
+void readInfoRF(void);
+const char *getVersionRF(void);
+const char *getModelRF(void);
 
 #endif /* INC_RF_MODULE_H_ */

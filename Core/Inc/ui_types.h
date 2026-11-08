@@ -7,46 +7,49 @@
 
 typedef enum disp_state
 {
-    DISP_NONE,
+	DISP_NONE,
 
-    DISP_SPLASH,
-    DISP_MAIN_SCR,
-    DISP_MAIN_MENU,
+	DISP_SPLASH,
+	DISP_MAIN_SCR,
+	DISP_MAIN_MENU,
 
-    DISP_SETTINGS,
-    DISP_RADIO_SETTINGS,
-    DISP_DISPLAY_SETTINGS,
-    DISP_KEYBOARD_SETTINGS,
-    DISP_M17_SETTINGS,
+	DISP_MESSAGES,
+	DISP_INBOX,
+	DISP_MSG_VIEW,
+	DISP_MSG_OPTIONS,
+	DISP_MSG_NOTIFY,
 
-    DISP_INFO,
-    DISP_DEBUG,
+	DISP_SETTINGS,
+	DISP_RADIO_SETTINGS,
+	DISP_DISPLAY_SETTINGS,
+	DISP_ALERT_SETTINGS,
+	DISP_KEYBOARD_SETTINGS,
+	DISP_M17_SETTINGS,
 
-    DISP_TEXT_MSG_ENTRY,
-    DISP_TEXT_VALUE_ENTRY,
-    DISP_NUM_VALUE_ENTRY,
-    DISP_ON_OFF_ENTRY,
+	DISP_INFO,
+	DISP_DEBUG,
 
-	DISP_TEXT_MSG_RCVD,
+	DISP_TEXT_MSG_ENTRY,
+	DISP_TEXT_VALUE_ENTRY,
+	DISP_OPTION_SELECT,
+	DISP_TEXT_VIEW,
 
 	DISP_NUM_ITEMS
 } disp_state_t;
 
-#define MAX_NUM_ITEMS  16
+#define MAX_NUM_ITEMS	8		//items per static menu
+#define LIST_ROWS		4		//visible list rows
 
+//static menu definition
 typedef struct disp
 {
-    char title[18];                             // title
-    uint8_t num_items;                          // number of items
-    char item[MAX_NUM_ITEMS][24];               // entries
-    char value[MAX_NUM_ITEMS][24];              // values
-
-    disp_state_t next_disp[MAX_NUM_ITEMS];      // next display per item
-    disp_state_t prev_disp;                     // previous display
-
-    edit_set_t edit[MAX_NUM_ITEMS];				// edit: parameter entry
+	const char *title;							// title
+	uint8_t num_items;							// number of items
+	const char *item[MAX_NUM_ITEMS];			// entries
+	disp_state_t next_disp[MAX_NUM_ITEMS];		// submenu per item (DISP_NONE: use the field)
+	edit_set_t edit[MAX_NUM_ITEMS];				// field per item: value column, editor, action
+	disp_state_t prev_disp;						// fallback parent
 } disp_t;
-
 
 //display device (defined in display.h)
 typedef struct disp_dev_t disp_dev_t;

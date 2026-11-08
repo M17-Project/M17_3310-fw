@@ -21,7 +21,7 @@
 extern lsf_t lsf_tx;
 
 void m17TxInit(void);
-int8_t m17TxStart(const char *message, const dev_settings_t *dev_settings);
+int8_t m17TxStart(const char *message, const char *dst, const dev_settings_t *dev_settings);
 uint8_t m17TxProcess(void);
 uint8_t m17TxActive(void);
 uint8_t m17TxRefillPending(void);

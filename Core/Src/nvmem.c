@@ -1,4 +1,6 @@
 #include "nvmem.h"
+#include "tuning.h"
+#include "ringtones.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -11,7 +13,13 @@
 //is never mistaken for a valid one.
 
 #define NV_MAGIC		0x5337314DU		//"M17S"
-#define NV_LAYOUT		1U				//bump when dev_settings_t changes
+#define NV_LAYOUT		2U				//bump when dev_settings_t changes
+#define NV_V1_SIZE		144U			//sizeof(dev_settings_t) in layout 1
+
+//New fields are appended (dev_settings_ext_t), so a layout 1 record is
+//simply copied over the defaults. This only works if 'ext' starts right
+//behind the old structure:
+_Static_assert(offsetof(dev_settings_t, ext) == NV_V1_SIZE, "dev_settings_t layout 1 changed");
 #define NV_HDR_SIZE		12U
 #define NV_END			(MEM_START + MEM_SIZE)
 #define ALIGN4(x)		(((x) + 3U) & ~3U)
@@ -66,13 +74,16 @@ static uint32_t nvScan(uint16_t size, uint32_t *next_free)
 		*next_free = addr;
 
 	//verify the newest records only, newest first
+	//(accepts the current layout and layout 1, which is migrated on load)
 	for (uint8_t i=0; i<4 && i<n; i++)
 	{
 		uint32_t a = cand[(n - 1 - i) % 4];
 		const uint32_t *hdr = (const uint32_t*)a;
+		uint16_t layout = hdr[1] >> 16;
+		uint16_t len = hdr[1] & 0xFFFF;
 
-		if ((hdr[1] >> 16) == NV_LAYOUT && (hdr[1] & 0xFFFF) == size &&
-			crc32((const uint8_t*)(a + NV_HDR_SIZE), size) == hdr[2])
+		if (((layout == NV_LAYOUT && len == size) || (layout == 1U && len == NV_V1_SIZE)) &&
+			crc32((const uint8_t*)(a + NV_HDR_SIZE), len) == hdr[2])
 			return a;
 	}
 
@@ -90,8 +101,8 @@ static uint8_t isErased(uint32_t addr, uint32_t len)
 	return 1;
 }
 
-//memory
-uint8_t eraseSector(void)
+//erase a Flash sector (blocks the CPU for up to ~2 s)
+uint8_t flashEraseSector(uint32_t sector)
 {
 	if(HAL_FLASH_Unlock()==HAL_OK)
 	{
@@ -99,7 +110,7 @@ uint8_t eraseSector(void)
 		{
 			FLASH_TYPEERASE_SECTORS,	//erase sectors
 			FLASH_BANK_1,				//bank 1 (the only available, i guess)
-			FLASH_SECTOR_11,			//start at sector 11 (last)
+			sector,						//sector to erase
 			1,							//1 sector to erase
 			FLASH_VOLTAGE_RANGE_3,		//2.7 to 3.6V
 		};
@@ -112,7 +123,7 @@ uint8_t eraseSector(void)
 
 		if(ret==HAL_OK && sector_error==0xFFFFFFFFU) //successful erase
 		{
-			dbg_print("[NVMEM] Sector erased.\n");
+			dbg_print("[NVMEM] Sector %lu erased.\n", (unsigned long)sector);
 
 			return 0;
 		}
@@ -125,6 +136,34 @@ uint8_t eraseSector(void)
 	dbg_print("[NVMEM] Error unlocking Flash memory.\n");
 
 	return 1;
+}
+
+//settings sector
+uint8_t eraseSector(void)
+{
+	return flashEraseSector(FLASH_SECTOR_11);
+}
+
+//program 32-bit words (Flash must be unlocked by the caller)
+uint8_t flashProgramWords(uint32_t addr, const void *data, uint32_t size)
+{
+	const uint8_t *src = (const uint8_t*)data;
+
+	for(uint32_t i=0; i<size; i+=4)
+	{
+		uint32_t w = 0xFFFFFFFFU;
+		uint32_t n = (size - i < 4) ? (size - i) : 4;
+		memcpy(&w, &src[i], n);
+		if(HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr+i, w)!=HAL_OK)
+			return 1;
+	}
+
+	return 0;
+}
+
+uint32_t nvCrc32(const void *data, uint32_t len)
+{
+	return crc32((const uint8_t*)data, len);
 }
 
 static uint8_t writeRecord(uint32_t addr, const void *data, uint16_t size)
@@ -140,13 +179,8 @@ static uint8_t writeRecord(uint32_t addr, const void *data, uint16_t size)
 	ok &= HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr+8, crc32(src, size))==HAL_OK;
 
 	//payload, word by word (the last word is padded with 0xFF)
-	for(uint16_t i=0; i<size && ok; i+=4)
-	{
-		uint32_t w = 0xFFFFFFFFU;
-		uint16_t n = (size - i < 4) ? (size - i) : 4;
-		memcpy(&w, &src[i], n);
-		ok &= HAL_FLASH_Program(FLASH_TYPEPROGRAM_WORD, addr+NV_HDR_SIZE+i, w)==HAL_OK;
-	}
+	if(ok)
+		ok &= flashProgramWords(addr+NV_HDR_SIZE, src, size)==0;
 
 	//magic last - validates the record
 	if(ok)
@@ -159,6 +193,17 @@ static uint8_t writeRecord(uint32_t addr, const void *data, uint16_t size)
 		ok = 0;
 
 	return ok ? 0 : 1;
+}
+
+//1 if the next saveData() call has to erase the sector first (slow)
+uint8_t saveNeedsErase(uint16_t size)
+{
+	uint32_t rec = NV_HDR_SIZE + ALIGN4(size);
+	uint32_t addr;
+
+	nvScan(size, &addr);
+
+	return (addr + rec > NV_END || !isErased(addr, rec)) ? 1 : 0;
 }
 
 uint8_t saveData(const void *data, uint16_t size)
@@ -218,6 +263,43 @@ static void sanitizeSettings(dev_settings_t *s)
 		s->channel.can = 0;
 	if(!(s->freq_corr >= -50.0f && s->freq_corr <= 50.0f)) //also catches NaN
 		s->freq_corr = 0.0f;
+
+	//layout 2
+	s->ext.vfo.ch_name[sizeof(s->ext.vfo.ch_name)-1] = 0;
+	s->ext.vfo.dst[sizeof(s->ext.vfo.dst)-1] = 0;
+	if(s->ext.vfo.can > 15)
+		s->ext.vfo.can = 0;
+	if(!tuneFreqValid(s->ext.vfo.rx_frequency))
+		s->ext.vfo.rx_frequency = 433475000U;
+	if(!tuneFreqValid(s->ext.vfo.tx_frequency))
+		s->ext.vfo.tx_frequency = s->ext.vfo.rx_frequency;
+	if(s->tuning_mode != TUNING_VFO && s->tuning_mode != TUNING_MEM)
+		s->tuning_mode = TUNING_VFO;
+	if(s->ext.vfo_step == 0 || s->ext.vfo_step > 1000000U)
+		s->ext.vfo_step = VFO_STEP_DEFAULT;
+	if(s->ext.splash_time > 10)
+		s->ext.splash_time = 2;
+	if(s->ext.contrast > 127)
+		s->ext.contrast = 0x48;
+	if(s->ext.ringtone >= ringtones_num)
+		s->ext.ringtone = 1;
+	s->ext.vibration = s->ext.vibration ? 1 : 0;
+	s->ext.ukrainian = s->ext.ukrainian ? 1 : 0;
+	if(s->kbd_timeout < 100 || s->kbd_timeout > 3000)
+		s->kbd_timeout = 750;
+	if(s->kbd_delay < 50 || s->kbd_delay > 1000)
+		s->kbd_delay = 150;
+}
+
+//layout 1 -> current: the old structure is a prefix of the new one
+static void migrateSettings(dev_settings_t *s, const void *old, uint16_t old_len,
+		const dev_settings_t *defaults)
+{
+	memcpy(s, defaults, sizeof(dev_settings_t));
+	memcpy(s, old, old_len);
+
+	//the old active channel becomes the VFO
+	s->ext.vfo = s->channel;
 }
 
 //device settings
@@ -228,15 +310,26 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 	//newest valid record
 	if(rec)
 	{
-		memcpy((uint8_t*)dev_settings, (const uint8_t*)(rec + NV_HDR_SIZE), sizeof(dev_settings_t));
+		const uint32_t *hdr = (const uint32_t*)rec;
 
-		dbg_print("[NVMEM] Device settings loaded.\n");
+		if((hdr[1] >> 16) == NV_LAYOUT)
+		{
+			memcpy((uint8_t*)dev_settings, (const uint8_t*)(rec + NV_HDR_SIZE), sizeof(dev_settings_t));
+			dbg_print("[NVMEM] Device settings loaded.\n");
+		}
+		else
+		{
+			migrateSettings(dev_settings, (const void*)(rec + NV_HDR_SIZE), hdr[1] & 0xFFFF, def_dev_settings);
+			sanitizeSettings(dev_settings);
+			saveData(dev_settings, sizeof(dev_settings_t));
+			dbg_print("[NVMEM] Device settings migrated from layout %lu.\n", (unsigned long)(hdr[1] >> 16));
+		}
 	}
 
 	//settings stored by an older firmware version (raw struct, no header)
 	else if(*((uint32_t*)MEM_START)!=0xFFFFFFFFU && *((uint32_t*)MEM_START)!=NV_MAGIC)
 	{
-		memcpy((uint8_t*)dev_settings, (uint8_t*)MEM_START, sizeof(dev_settings_t));
+		migrateSettings(dev_settings, (const void*)MEM_START, NV_V1_SIZE, def_dev_settings);
 		sanitizeSettings(dev_settings);
 		saveData(dev_settings, sizeof(dev_settings_t)); //convert
 
@@ -256,38 +349,4 @@ void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_
 	}
 
 	sanitizeSettings(dev_settings);
-
-	//load settings into menus
-	//frequency correction
-	float v = dev_settings->freq_corr;
-	char sign = '+';
-
-	if (v < 0.0f)
-	{
-	    sign = '-';
-	    v = -v;
-	}
-
-	int ip = (int)v;
-	int fp = (int)((v * 10.0f) + 0.5f) % 10;
-
-	sprintf(displays[DISP_RADIO_SETTINGS].value[0], "%c%d.%dppm", sign, ip, fp);
-
-	//RF power
-	if(dev_settings->channel.rf_pwr==RF_PWR_HIGH)
-		sprintf(displays[DISP_RADIO_SETTINGS].value[1], "2W");
-	else
-		sprintf(displays[DISP_RADIO_SETTINGS].value[1], "0.5W");
-
-	//SRC callsign
-	snprintf(displays[DISP_M17_SETTINGS].value[0], sizeof(displays[0].value[0]), "%s", dev_settings->src_callsign);
-
-	//destination
-	snprintf(displays[DISP_M17_SETTINGS].value[1], sizeof(displays[0].value[0]), "%s", dev_settings->channel.dst);
-
-	//CAN
-	sprintf(displays[DISP_M17_SETTINGS].value[2], "%d", dev_settings->channel.can);
-
-	//backlight timeout
-	sprintf(displays[DISP_DISPLAY_SETTINGS].value[1], "%ds", dev_settings->backlight_timer);
 }

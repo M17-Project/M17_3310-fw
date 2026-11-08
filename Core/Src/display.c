@@ -2,64 +2,11 @@
 #include <string.h>
 #include <stdio.h>
 #include "main.h"
+#include "platform.h"
+#include "inbox.h"
+#include "tuning.h"
 
-extern uint8_t rx_scroll;
-
-uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max)
-{
-	uint8_t xp = 0;
-	uint8_t n  = 0;
-
-	if (!str || !*str)
-		return 0;
-
-	if (lines && n < max)
-		lines[n] = str;
-	n++;
-
-	while (*str)
-	{
-		// skip spaces
-		while (*str == ' ')
-		{
-			xp += f->symbol[0].width;
-			str++;
-		}
-
-		// stop if we reached the end
-		if (!*str)
-			break;
-
-		// measure next word
-		const char *w = str;
-		uint8_t ww = 0;
-
-		while (*w && *w != ' ')
-		{
-			ww += fontGlyph(f, *w)->width;
-			w++;
-		}
-
-		// wrap before word
-		if (xp && xp + ww > RES_X)
-		{
-			xp = 0;
-			if (lines && n < max)
-				lines[n] = str;
-			n++;
-		}
-
-		// consume word
-		while (*str && *str != ' ')
-		{
-			xp += fontGlyph(f, *str)->width;
-			str++;
-		}
-	}
-
-	return n;
-}
-
+//--- low level ---
 void dispWrite(disp_dev_t *disp_dev, uint8_t dc, uint8_t val)
 {
 	HAL_GPIO_WritePin(DISP_DC_GPIO_Port, DISP_DC_Pin, dc);
@@ -82,11 +29,19 @@ void dispInit(disp_dev_t *disp_dev)
 	HAL_Delay(10);
 
 	dispWrite(disp_dev, 0, 0x21);			//extended commands
-	dispWrite(disp_dev, 0, 0x80|0x48);		//contrast (0x00 to 0x7F)
+	dispWrite(disp_dev, 0, 0x80|LCD_CONTRAST_DEFAULT);	//contrast (0x00 to 0x7F)
 	dispWrite(disp_dev, 0, 0x06);			//temp coeff.
 	dispWrite(disp_dev, 0, 0x13);			//LCD bias 1:48
 	dispWrite(disp_dev, 0, 0x20);			//standard commands
 	dispWrite(disp_dev, 0, 0x0C);			//normal mode
+}
+
+//contrast (Vop): 0..127
+void dispSetContrast(disp_dev_t *disp_dev, uint8_t contrast)
+{
+	dispWrite(disp_dev, 0, 0x21);
+	dispWrite(disp_dev, 0, 0x80|(contrast & 0x7F));
+	dispWrite(disp_dev, 0, 0x20);
 }
 
 void dispGotoXY(disp_dev_t *disp_dev, uint8_t x, uint8_t y)
@@ -148,156 +103,19 @@ void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set)
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color)
 {
 	uint8_t h=f->height;
+	uint8_t msb=(h>8)?(h+3):(h); //fonts are right-aligned
 	const symbol_t *g = fontGlyph(f, c);
 
 	for(uint8_t i=0; i<h; i++)
 	{
-		for(uint8_t j=0; j<g->width; j++)
+		for(uint8_t j=0; j<g->width && j<msb; j++)
 		{
-			if(g->rows[i] & 1<<(((h>8)?(h+3):(h))-1-j)) //fonts are right-aligned
+			if(g->rows[i] & 1<<(msb-1-j))
 				setPixel(disp_dev, x+j, y+i, color);
 		}
 	}
-}
 
-//TODO: fix multiline text alignment when not in ALIGN_LEFT mode
-void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align)
-{
-	uint8_t xp=0, w=0;
-	uint8_t len = strlen(str);
-
-	//get width
-	for(uint8_t i=0; i<len; i++)
-		w+=fontGlyph(f, str[i])->width;
-
-	switch(align)
-	{
-		case ALIGN_LEFT:
-			xp=0;
-		break;
-
-		case ALIGN_CENTER:
-			xp=(RES_X-w)/2+1;
-		break;
-
-		case ALIGN_RIGHT:
-			xp=RES_X-w;
-		break;
-
-		case ALIGN_ARB:
-			xp=x;
-		break;
-
-		default: //ALIGN_LEFT
-			xp=0;
-		break;
-	}
-
-	for(uint8_t i=0; i<len; i++)
-	{
-		if(xp > RES_X-fontGlyph(f, str[i])->width)
-		{
-			y+=f->height+1;
-			xp=0; //ALIGN_LEFT
-		}
-
-		setChar(disp_dev, xp, y, f, str[i], color);
-		xp+=fontGlyph(f, str[i])->width;
-	}
-
-	dispRefresh(disp_dev);
-}
-
-//display text with word wrapping
-void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color)
-{
-	uint8_t xp = 0;
-
-	while (*str)
-	{
-		// measure next word
-		const char *w = str;
-		uint8_t wlen = 0;
-		uint8_t ww = 0;
-
-		while (w[wlen] && w[wlen] != ' ')
-		{
-			ww += fontGlyph(f, w[wlen])->width;
-			wlen++;
-		}
-
-		// wrap before word if needed
-		if (xp + ww > RES_X)
-		{
-			y += f->height + 1;
-			xp = 0;
-		}
-
-		// draw word
-		for (uint8_t i = 0; i < wlen; i++)
-		{
-			setChar(disp_dev, xp, y, f, str[i], color);
-			xp += fontGlyph(f, str[i])->width;
-		}
-
-		// draw space
-		if (*w == ' ')
-		{
-			setChar(disp_dev, xp, y, f, ' ', color);
-			xp += f->symbol[0].width;
-			wlen++;
-		}
-
-		str += wlen;
-	}
-
-	dispRefresh(disp_dev);
-}
-
-void setStringWordWrapFromLine(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f,
-		const char *str, uint8_t color, uint8_t start_line, uint8_t max_lines)
-{
-	const char *lines[16];
-	uint8_t total = wrapLineStarts(f, str, lines, 16);
-
-	if (!total || start_line >= total)
-		return;
-
-	uint8_t end = start_line + max_lines;
-	if (end > total)
-		end = total;
-
-	for (uint8_t i = start_line; i < end; i++)
-	{
-		uint8_t xp = x;
-		const char *s = lines[i];
-		const char *e = (i + 1 < total) ? lines[i + 1] : NULL;
-
-		while (*s == ' ')
-			s++;
-
-		while (*s && s != e)
-		{
-			setChar(disp_dev, xp, y, f, *s, color);
-			xp += fontGlyph(f, *s)->width;
-			s++;
-		}
-
-		y += f->height + 1;
-	}
-
-	dispRefresh(disp_dev);
-}
-
-//display text with word wrapping - only the last few lines (display's limitation)
-void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines)
-{
-	const char *lines[16];
-	uint8_t total = wrapLineStarts(f, str, lines, 16);
-
-	uint8_t first = (total > max_lines) ? (total - max_lines) : 0;
-
-	setStringWordWrapFromLine(disp_dev, x, y, f, str, color, first, max_lines);
+	disp_dirty = 1;
 }
 
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill)
@@ -324,7 +142,7 @@ void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t 
 			setPixel(disp_dev, i, y0, color);
 			setPixel(disp_dev, i, y1, color);
 		}
-		for(uint8_t i=y0+1; i<=y1-1; i++)
+		for(uint8_t i=y0+1; i<y1; i++)
 		{
 			setPixel(disp_dev, x0, i, color);
 			setPixel(disp_dev, x1, i, color);
@@ -334,39 +152,304 @@ void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t 
 	dispRefresh(disp_dev);
 }
 
-void showMainScreen(disp_dev_t *disp_dev)
+//--- text ---
+uint16_t stringWidth(const font_t *f, const char *str)
 {
-	char str[24];
+	uint16_t w = 0;
 
-	dispClear(disp_dev, COL_WHITE);
+	while (*str)
+		w += fontGlyph(f, *str++)->width;
 
-	sprintf(str, "%s %s", (dev_settings.channel.mode==RF_MODE_DIG) ? "Dig" : "Ana",
-			(dev_settings.tuning_mode==TUNING_MEM) ? "Mem" : "VFO");
-	setString(disp_dev, 0, 0, &nokia_small, str, COL_BLACK, ALIGN_LEFT);
+	return w;
+}
 
-	setString(disp_dev, 0, 12, &nokia_big, dev_settings.channel.ch_name, COL_BLACK, ALIGN_CENTER);
+//shorten a string in place so that it fits into max_w pixels ("abc.." if cut)
+void ellipsize(const font_t *f, char *str, uint8_t max_w)
+{
+	if (stringWidth(f, str) <= max_w)
+		return;
 
-	sprintf(str, "R %ld.%04ld",
-			dev_settings.channel.rx_frequency/1000000,
-			(dev_settings.channel.rx_frequency%1000000)/100);
-	setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+	uint8_t dots = 2 * fontGlyph(f, '.')->width;
+	uint16_t w = 0;
+	char *p = str;
 
-	sprintf(str, "T %ld.%04ld",
-			dev_settings.channel.tx_frequency/1000000,
-			(dev_settings.channel.tx_frequency%1000000)/100);
-	setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+	while (*p && w + fontGlyph(f, *p)->width + dots <= max_w)
+		w += fontGlyph(f, *p++)->width;
 
-	//is the battery charging? (read /CHG signal)
-	if(!(CHG_GPIO_Port->IDR & CHG_Pin))
+	if (max_w >= dots)
 	{
-		setString(disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT); //display charging status
+		*p++ = '.';
+		*p++ = '.';
+	}
+	*p = 0;
+}
+
+//single line of text (wraps to the next line if it does not fit - use
+//ellipsize() or setStringClip() for text of unknown length)
+void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align)
+{
+	uint16_t w = stringWidth(f, str);
+	uint8_t xp;
+
+	switch(align)
+	{
+		case ALIGN_CENTER:
+			xp = (w < RES_X) ? (RES_X-w)/2+1 : 0;
+		break;
+
+		case ALIGN_RIGHT:
+			xp = (w < RES_X) ? RES_X-w : 0;
+		break;
+
+		case ALIGN_ARB:
+			xp = x;
+		break;
+
+		default: //ALIGN_LEFT
+			xp = 0;
+		break;
+	}
+
+	for(; *str; str++)
+	{
+		uint8_t cw = fontGlyph(f, *str)->width;
+
+		if(xp + cw > RES_X)
+		{
+			y += f->height+1;
+			xp = 0; //ALIGN_LEFT
+		}
+
+		setChar(disp_dev, xp, y, f, *str, color);
+		xp += cw;
+	}
+
+	dispRefresh(disp_dev);
+}
+
+//draw as many characters as fit into max_w pixels, returns the end x position
+uint8_t setStringClip(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_w)
+{
+	uint16_t w = 0;
+
+	for (; *str; str++)
+	{
+		uint8_t cw = fontGlyph(f, *str)->width;
+
+		if (w + cw > max_w)
+			break;
+
+		setChar(disp_dev, x + w, y, f, *str, color);
+		w += cw;
+	}
+
+	return x + w;
+}
+
+//find one line of word-wrapped text
+//*start: first character to draw, *len: number of characters
+//returns the beginning of the next line
+static const char *wrapLine(const font_t *f, const char *s, const char **start, uint8_t *len)
+{
+	while (*s == ' ')
+		s++;
+
+	*start = s;
+
+	const char *brk = NULL; //last space - preferred break position
+	uint16_t w = 0;
+	const char *p = s;
+
+	while (*p && *p != '\n')
+	{
+		uint8_t cw = fontGlyph(f, *p)->width;
+
+		if (*p == ' ')
+			brk = p;
+
+		if (w + cw > RES_X)
+		{
+			if (brk != NULL)
+			{
+				*len = brk - s;
+				return brk;
+			}
+
+			if (p == s) //always consume at least one character
+				p++;
+
+			*len = p - s; //word longer than the screen: hard break
+			return p;
+		}
+
+		w += cw;
+		p++;
+	}
+
+	*len = p - s;
+
+	return (*p == '\n') ? p + 1 : p;
+}
+
+uint16_t countLines(const font_t *f, const char *str)
+{
+	uint16_t n = 0;
+	const char *start;
+	uint8_t len;
+
+	while (*str)
+	{
+		str = wrapLine(f, str, &start, &len);
+		if (len == 0 && *start == 0) //only trailing spaces left
+			break;
+		n++;
+	}
+
+	return n;
+}
+
+void drawWrapped(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str,
+		uint8_t color, uint16_t first_line, uint8_t max_lines)
+{
+	uint16_t line = 0;
+	const char *start;
+	uint8_t len;
+
+	while (*str && max_lines)
+	{
+		str = wrapLine(f, str, &start, &len);
+
+		if (len == 0 && *start == 0)
+			break;
+
+		if (line++ < first_line)
+			continue;
+
+		uint8_t xp = x;
+		for (uint8_t i=0; i<len; i++)
+		{
+			setChar(disp_dev, xp, y, f, start[i], color);
+			xp += fontGlyph(f, start[i])->width;
+		}
+
+		y += f->height + 1;
+		max_lines--;
+	}
+
+	dispRefresh(disp_dev);
+}
+
+//1 if the font cannot draw some character of 'str' properly (Cyrillic without glyphs)
+static uint8_t needsCyrillic(const font_t *f, const char *str)
+{
+	if (f->cyr != NULL)
+		return 0;
+
+	for (; *str; str++)
+		if ((uint8_t)*str >= 0xA0)
+			return 1;
+
+	return 0;
+}
+
+//centered line in the big font, small font if it does not fit (or is Cyrillic)
+static void drawCenteredFit(disp_dev_t *disp_dev, uint8_t y, const char *str)
+{
+	char buf[32];
+
+	if (!needsCyrillic(&nokia_big, str) && stringWidth(&nokia_big, str) <= RES_X)
+	{
+		setString(disp_dev, 0, y, &nokia_big, str, COL_BLACK, ALIGN_CENTER);
+		return;
+	}
+
+	snprintf(buf, sizeof(buf), "%s", str);
+	ellipsize(&nokia_small, buf, RES_X);
+	setString(disp_dev, 0, y + 3, &nokia_small, buf, COL_BLACK, ALIGN_CENTER);
+}
+
+//--- screens ---
+const char *textModeLabel(text_entry_t mode)
+{
+	switch (mode)
+	{
+		case TEXT_LOWERCASE:	return "abc";
+		case TEXT_UPPERCASE:	return "ABC";
+		case TEXT_T9:			return "T9";
+		case TEXT_NUMERIC:		return "123";
+		case TEXT_UKR_LOWER:	return "\xE0\xE1\xE2";	//Ukrainian a, be, ve
+		case TEXT_UKR_UPPER:	return "\xC0\xC1\xC2";
+		default:				return "";
+	}
+}
+
+//battery indicator in the upper right corner
+void drawBattStatus(disp_dev_t *disp_dev)
+{
+	char str[8];
+
+	drawRect(disp_dev, RES_X-1-15, 0, RES_X-1, 8, COL_WHITE, 1);
+
+	if (isCharging())
+	{
+		snprintf(str, sizeof(str), "B+");
 	}
 	else
 	{
-		char u_batt_str[8];
 		uint16_t u_batt = getBattVoltage();
-		sprintf(u_batt_str, "%1d.%1d", u_batt/1000, (u_batt%1000)/100);
-		setString(disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT); //display voltage
+		if (u_batt > 3500)
+			snprintf(str, sizeof(str), "%u.%u", u_batt/1000, (u_batt%1000)/100);
+		else
+			snprintf(str, sizeof(str), "Lo");
+	}
+
+	setString(disp_dev, RES_X-1, 0, &nokia_small, str, COL_BLACK, ALIGN_RIGHT);
+}
+
+void showMainScreen(disp_dev_t *disp_dev)
+{
+	char str[32];
+	const ch_settings_t *ch = &dev_settings.channel;
+
+	dispClear(disp_dev, COL_WHITE);
+
+	//status line: mode, memory channel, unread messages, battery
+	if (dev_settings.tuning_mode == TUNING_MEM)
+		snprintf(str, sizeof(str), "%s M%u/%u", (ch->mode==RF_MODE_DIG) ? "Dig" : "Ana",
+				dev_settings.ch_num + 1, tuneNumChannels());
+	else
+		snprintf(str, sizeof(str), "%s VFO", (ch->mode==RF_MODE_DIG) ? "Dig" : "Ana");
+	uint8_t x = setStringClip(disp_dev, 0, 0, &nokia_small, str, COL_BLACK, 52);
+
+	if (inboxUnread())
+		setString(disp_dev, (x < 44) ? 46 : x + 2, 0, &nokia_small, ICON_ENVELOPE, COL_BLACK, ALIGN_ARB);
+
+	drawBattStatus(disp_dev);
+
+	if (dev_settings.tuning_mode == TUNING_MEM)
+	{
+		drawCenteredFit(disp_dev, 12, ch->ch_name);
+
+		fmtFreq(&str[2], sizeof(str)-2, ch->rx_frequency);
+		str[0] = 'R'; str[1] = ' ';
+		setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+
+		fmtFreq(&str[2], sizeof(str)-2, ch->tx_frequency);
+		str[0] = 'T';
+		setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+	}
+	else
+	{
+		fmtFreq(str, sizeof(str), ch->rx_frequency);
+		drawCenteredFit(disp_dev, 12, str);
+
+		fmtFreq(&str[2], sizeof(str)-2, ch->tx_frequency);
+		str[0] = 'T'; str[1] = ' ';
+		setString(disp_dev, 0, 27, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+
+		snprintf(str, sizeof(str), ICON_ARROW "%s", ch->dst);
+		ellipsize(&nokia_small, str, RES_X);
+		setString(disp_dev, 0, 36, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
 	}
 }
 
@@ -374,8 +457,9 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 {
 	setBacklight(0);
 
-	setString(disp_dev, 0, 9, &nokia_big, line1, COL_BLACK, ALIGN_CENTER);
-	setString(disp_dev, 0, 22, &nokia_big, line2, COL_BLACK, ALIGN_CENTER);
+	dispClear(disp_dev, COL_WHITE);
+	drawCenteredFit(disp_dev, 9, line1);
+	drawCenteredFit(disp_dev, 22, line2);
 	setString(disp_dev, 0, 40, &nokia_small, callsign, COL_BLACK, ALIGN_CENTER);
 	dispFlush(disp_dev);
 
@@ -387,94 +471,160 @@ void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, cons
 	}
 }
 
-void showRcvdTextMessage(disp_dev_t *disp_dev, const char* src, const char* dst, const char* msg)
+//list with a bold title and LIST_ROWS rows, 'sel' is highlighted
+void showList(disp_dev_t *disp_dev, const char *title, uint8_t num, uint8_t top, uint8_t sel, list_item_fn item)
 {
+	char t[32];
+
 	dispClear(disp_dev, COL_WHITE);
 
-	char header[2][8+10+1];
-	sprintf(&header[0][0], "%s", src);
-	sprintf(&header[1][0], "\x82%s", dst);
+	snprintf(t, sizeof(t), "%s", title);
+	ellipsize(&nokia_small_bold, t, RES_X);
+	setString(disp_dev, 0, 0, &nokia_small_bold, t, COL_BLACK, ALIGN_CENTER);
 
-	setString(disp_dev, 0, 0, &nokia_small, header[0], COL_BLACK, ALIGN_LEFT);
-	setString(disp_dev, 0, 8, &nokia_small, header[1], COL_BLACK, ALIGN_LEFT);
+	for (uint8_t i=0; i<LIST_ROWS && top+i<num; i++)
+	{
+		char label[40], value[40];
+		uint8_t y = (i+1)*9;
+		uint8_t col = COL_BLACK;
 
-	setStringWordWrapFromLine(disp_dev, 0, 18, &nokia_small, msg, COL_BLACK, rx_scroll, 3);
+		label[0] = value[0] = 0;
+		item(top+i, label, value, sizeof(label));
+
+		if (top+i == sel)
+		{
+			drawRect(disp_dev, 0, y-1, RES_X-1, y+8, COL_BLACK, 1);
+			col = COL_WHITE;
+		}
+
+		//the label has priority, the value gets the rest (at least a third)
+		uint8_t vw = 0;
+		if (value[0])
+		{
+			uint16_t lw = stringWidth(&nokia_small, label);
+			uint8_t max_vw = (lw + 4 < RES_X - RES_X/3) ? RES_X - lw - 4 : RES_X/3;
+			ellipsize(&nokia_small, value, max_vw);
+			vw = stringWidth(&nokia_small, value);
+			setString(disp_dev, 0, y, &nokia_small, value, col, ALIGN_RIGHT);
+		}
+
+		setStringClip(disp_dev, 1, y, &nokia_small, label, col, RES_X - 1 - (vw ? vw + 3 : 0));
+	}
+
+	dispRefresh(disp_dev);
 }
 
-void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t entry_mode)
+void showPopup(disp_dev_t *disp_dev, const char *text)
 {
 	dispClear(disp_dev, COL_WHITE);
 
-	redrawTextEntryIcon(disp_dev, entry_mode);
-
-	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", COL_BLACK, ALIGN_CENTER);
+	if (!needsCyrillic(&nokia_big, text) && stringWidth(&nokia_big, text) <= RES_X)
+		setString(disp_dev, 0, 17, &nokia_big, text, COL_BLACK, ALIGN_CENTER);
+	else
+		drawWrapped(disp_dev, 0, 10, &nokia_small, text, COL_BLACK, 0, 3);
 }
 
-void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t entry_mode)
+//header: entry mode on the left, 'right' on the right
+static void drawEntryHeader(disp_dev_t *disp_dev, text_entry_t mode, const char *right)
 {
+	char str[32];
+
+	snprintf(str, sizeof(str), ICON_PEN "%s", textModeLabel(mode));
+	uint8_t x = setStringClip(disp_dev, 0, 0, &nokia_small, str, COL_BLACK, RES_X);
+
+	if (right && *right)
+	{
+		snprintf(str, sizeof(str), "%s", right);
+		ellipsize(&nokia_small, str, RES_X - x - 3);
+		setString(disp_dev, 0, 0, &nokia_small, str, COL_BLACK, ALIGN_RIGHT);
+	}
+}
+
+//single value: big font, the end of the text is always visible, with a cursor
+void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *title, const char *text)
+{
+	const uint8_t box_w = RES_X - 7;
+
 	dispClear(disp_dev, COL_WHITE);
-
-	redrawTextEntryIcon(disp_dev, entry_mode);
-
+	drawEntryHeader(disp_dev, mode, title);
 	drawRect(disp_dev, 0, 9, RES_X-1, RES_Y-11, COL_BLACK, 0);
+
+	//big font, small one for Cyrillic text (the big font has no Cyrillic glyphs)
+	const font_t *f = needsCyrillic(&nokia_big, text) ? &nokia_small : &nokia_big;
+	uint8_t y = (f == &nokia_big) ? 13 : 17;
+
+	//skip leading characters until the rest fits
+	const char *t = text;
+	while (*t && stringWidth(f, t) > box_w)
+		t++;
+
+	uint8_t x = setStringClip(disp_dev, 3, y, f, t, COL_BLACK, box_w);
+	drawRect(disp_dev, x, y, x, y + f->height - 1, COL_BLACK, 1); //cursor
 
 	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Ok", COL_BLACK, ALIGN_CENTER);
 }
 
-//for text messages
-void redrawMsgEntry(disp_dev_t *disp_dev, const char *text)
+//text message: the last 3 lines are visible
+void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *dst, const char *text)
 {
-	drawRect(disp_dev, 0, 10, RES_X-1, RES_Y-9, COL_WHITE, 1);
-	setStringWordWrapLastLines(disp_dev, 0, 10, &nokia_small, text, COL_BLACK, 3);
-}
+	char to[16];
 
-void redrawValueEntry(disp_dev_t *disp_dev, const char *text)
-{
-	drawRect(disp_dev, 1, 10, RES_X-2, RES_Y-12, COL_WHITE, 1);
-	setString(disp_dev, 3, 13, &nokia_big, text, COL_BLACK, ALIGN_ARB);
-}
-
-void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t entry_mode)
-{
-	drawRect(disp_dev, 0, 0, 21, 8, COL_WHITE, 1);
-
-	if (entry_mode == TEXT_LOWERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "abc", COL_BLACK, ALIGN_LEFT);
-	else if (entry_mode == TEXT_UPPERCASE)
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "ABC", COL_BLACK, ALIGN_LEFT);
-	else
-		setString(disp_dev, 0, 0, &nokia_small, ICON_PEN "T9", COL_BLACK, ALIGN_LEFT);
-}
-
-//show menu with item highlighting
-//start_item - absolute index of first item to display
-//h_item - item to highlight, relative value: 0..3
-void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item)
-{
 	dispClear(disp_dev, COL_WHITE);
 
-	setString(disp_dev, 0, 0, &nokia_small_bold, menu->title, COL_BLACK, ALIGN_CENTER);
+	snprintf(to, sizeof(to), ICON_ARROW "%s", dst);
+	drawEntryHeader(disp_dev, mode, to);
 
-	for(uint8_t i=0; i<start_item+menu->num_items && i<4; i++)
-	{
-		//highlight
-		if(i==h_item)
-			drawRect(disp_dev, 0, (i+1)*9-1, RES_X-1, (i+1)*9+8, COL_BLACK, 1);
+	uint16_t total = countLines(&nokia_small, text);
+	drawWrapped(disp_dev, 0, 10, &nokia_small, text, COL_BLACK, (total > 3) ? total - 3 : 0, 3);
 
-		setString(disp_dev, 1, (i+1)*9, &nokia_small, menu->item[i+start_item], (i==h_item)?COL_WHITE:COL_BLACK, ALIGN_ARB);
-		if(menu->value[i+start_item][0]!=0)
-			setString(disp_dev, 0, (i+1)*9, &nokia_small, menu->value[i+start_item], (i==h_item)?COL_WHITE:COL_BLACK, ALIGN_RIGHT);
-	}
+	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Send", COL_BLACK, ALIGN_CENTER);
 }
 
-void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state, char *text)
+void showMessageView(disp_dev_t *disp_dev, const char *src, const char *dst, const char *age,
+		const char *text, uint16_t scroll, uint8_t idx, uint8_t total)
 {
-	if (disp_state == DISP_TEXT_MSG_ENTRY)
-	{
-		redrawMsgEntry(disp_dev, text);
-	}
-	else if (disp_state == DISP_TEXT_VALUE_ENTRY)
-	{
-		redrawValueEntry(disp_dev, text);
-	}
+	char str[16];
+
+	dispClear(disp_dev, COL_WHITE);
+
+	setString(disp_dev, 0, 0, &nokia_small, src, COL_BLACK, ALIGN_LEFT);
+	if (age && *age)
+		setString(disp_dev, 0, 0, &nokia_small, age, COL_BLACK, ALIGN_RIGHT);
+
+	snprintf(str, sizeof(str), ICON_ARROW "%s", dst);
+	setString(disp_dev, 0, 8, &nokia_small, str, COL_BLACK, ALIGN_LEFT);
+	snprintf(str, sizeof(str), "%u/%u", idx + 1, total);
+	setString(disp_dev, 0, 8, &nokia_small, str, COL_BLACK, ALIGN_RIGHT);
+
+	drawWrapped(disp_dev, 0, 18, &nokia_small, text, COL_BLACK, scroll, 3);
+}
+
+void showNotify(disp_dev_t *disp_dev, const char *src, uint8_t unread)
+{
+	char str[24];
+
+	dispClear(disp_dev, COL_WHITE);
+
+	setString(disp_dev, 0, 0, &nokia_small, ICON_ENVELOPE, COL_BLACK, ALIGN_CENTER);
+
+	snprintf(str, sizeof(str), "%u message%s", unread, (unread == 1) ? "" : "s");
+	drawCenteredFit(disp_dev, 10, str);
+
+	snprintf(str, sizeof(str), "from %s", src);
+	setString(disp_dev, 0, 26, &nokia_small, str, COL_BLACK, ALIGN_CENTER);
+
+	setString(disp_dev, 0, RES_Y-8, &nokia_small_bold, "Read", COL_BLACK, ALIGN_CENTER);
+}
+
+void showTextView(disp_dev_t *disp_dev, const char *title, const char *text, uint16_t scroll)
+{
+	char t[32];
+
+	dispClear(disp_dev, COL_WHITE);
+
+	snprintf(t, sizeof(t), "%s", title);
+	ellipsize(&nokia_small_bold, t, RES_X);
+	setString(disp_dev, 0, 0, &nokia_small_bold, t, COL_BLACK, ALIGN_CENTER);
+
+	drawWrapped(disp_dev, 0, 9, &nokia_small, text, COL_BLACK, scroll, 4);
 }

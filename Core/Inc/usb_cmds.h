@@ -13,8 +13,6 @@ extern dev_settings_t dev_settings;
 extern dev_settings_t def_dev_settings;
 extern lsf_t lsf_tx;
 
-extern void initTextTX(const char *message);
-
-void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len);
+void parseUSB(uint8_t *str, uint32_t len);
 
 #endif /* INC_USB_CMDS_H_ */

@@ -12,11 +12,75 @@ static uint8_t reg_page;					//selected via register 0x7F
 static uint8_t curr_bw = RF_BW_UNKNOWN;
 static uint32_t curr_freq_val;				//0 = unknown
 
+//module identification (sa8x8-fw: AT+VERSION, AT+MODEL)
+static char rf_version[48];
+static char rf_model[24];
+
 //discard any stale bytes (and a pending overrun) left in the UART receiver
 static void flushRxRF(void)
 {
 	while (__HAL_UART_GET_FLAG(&huart4, UART_FLAG_RXNE) || __HAL_UART_GET_FLAG(&huart4, UART_FLAG_ORE))
 		(void)huart4.Instance->DR; //SR read followed by DR read clears RXNE and ORE
+}
+
+//send an AT command and read a single reply line (CR/LF stripped)
+//returns the reply length, 0 if nothing arrived within 'timeout' ms
+static uint8_t queryRF(const char *cmd, char *out, uint8_t size, uint32_t timeout)
+{
+	uint8_t n = 0;
+
+	if (size == 0)
+		return 0;
+
+	flushRxRF();
+	HAL_UART_Transmit(&huart4, (uint8_t*)cmd, strlen(cmd), 20);
+
+	uint32_t t0 = HAL_GetTick();
+	while ((HAL_GetTick() - t0) < timeout)
+	{
+		uint8_t c;
+
+		if (HAL_UART_Receive(&huart4, &c, 1, 2) != HAL_OK)
+			continue;
+
+		if (c == '\n')
+			break;
+		if (c == '\r')
+			continue;
+		if (n < size - 1 && c >= ' ' && c < 0x7F)
+			out[n++] = (char)c;
+	}
+
+	out[n] = 0;
+	return n;
+}
+
+//(re)read the module's firmware version and model, blocking (~100 ms)
+void readInfoRF(void)
+{
+	//a module with the factory firmware answers differently (or not at all)
+	if (queryRF("AT+VERSION\r\n", rf_version, sizeof(rf_version), 60) == 0 ||
+		strcmp(rf_version, "ERR") == 0)
+		rf_version[0] = 0;
+
+	if (queryRF("AT+MODEL\r\n", rf_model, sizeof(rf_model), 40) == 0 ||
+		strcmp(rf_model, "ERR") == 0)
+		rf_model[0] = 0;
+
+	dbg_print("[RF module] Version: %s, model: %s\n",
+			rf_version[0] ? rf_version : "?", rf_model[0] ? rf_model : "?");
+}
+
+//"sa8x8-fw/v1.4.r3.gabc1234", empty if unknown
+const char *getVersionRF(void)
+{
+	return rf_version;
+}
+
+//"SA868S-UHF", empty if unknown
+const char *getModelRF(void)
+{
+	return rf_model;
 }
 
 uint8_t setRegRF(uint8_t reg, uint16_t val)
@@ -204,8 +268,6 @@ void initRF(const dev_settings_t *dev_settings)
 	curr_bw = RF_BW_UNKNOWN;
 	curr_freq_val = 0;
 
-	uint8_t data[64] = {0};
-
 	//PTT off
 	HAL_GPIO_WritePin(RF_PTT_GPIO_Port, RF_PTT_Pin, 1);
 
@@ -216,20 +278,7 @@ void initRF(const dev_settings_t *dev_settings)
 	HAL_GPIO_WritePin(RF_ENA_GPIO_Port, RF_ENA_Pin, 1);
 	HAL_Delay(100);
 
-	flushRxRF();
-	HAL_UART_Transmit(&huart4, (uint8_t*)"AT+VERSION\r\n", 12, 20);
-	HAL_UART_Receive(&huart4, data, sizeof(data)-1, 50); //naive, blocking
-
-	//display the received data
-	size_t len=strlen((char*)data);
-	if(len)
-	{
-		if(len>=2)
-			data[len-2]=0; //strip CR/LF
-		dbg_print("[RF module] Version: %s\n", data);
-	}
-	else
-		dbg_print("[RF module] Nothing received\n");
+	readInfoRF();
 
 	//SA868S (AT1846S) init sequence (thx, edgetriggered)
 	dbg_print("[RF module] Init sequence start\n");

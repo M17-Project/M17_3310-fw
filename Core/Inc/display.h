@@ -13,6 +13,8 @@
 #define COL_BLACK				1
 #define COL_WHITE				0
 
+#define LCD_CONTRAST_DEFAULT	0x48
+
 typedef struct __SPI_HandleTypeDef SPI_HandleTypeDef;
 typedef struct disp_dev_t
 {
@@ -25,35 +27,43 @@ extern dev_settings_t dev_settings;
 extern void setBacklight(uint8_t level);
 extern uint16_t getBattVoltage(void);
 
-uint8_t wrapLineStarts(const font_t *f, const char *str, const char **lines, uint8_t max);
+//list item callback: fill the label and the (optional) right-aligned value
+typedef void (*list_item_fn)(uint8_t idx, char *label, char *value, uint8_t size);
+
+//low level
 void dispWrite(disp_dev_t *disp_dev, uint8_t dc, uint8_t val);
 void dispInit(disp_dev_t *disp_dev);
+void dispSetContrast(disp_dev_t *disp_dev, uint8_t contrast);
 void dispGotoXY(disp_dev_t *disp_dev, uint8_t x, uint8_t y);
 void dispRefresh(disp_dev_t *disp_dev);
 void dispFlush(disp_dev_t *disp_dev);
 void dispClear(disp_dev_t *disp_dev, uint8_t color);
 void setPixel(disp_dev_t *disp_dev, uint8_t x, uint8_t y, uint8_t set);
 void setChar(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, char c, uint8_t color);
-void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align);
-void setStringWordWrap(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color);
-void setStringWordWrapFromLine(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f,
-		const char *str, uint8_t color, uint8_t start_line, uint8_t max_lines);
-void setStringWordWrapLastLines(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_lines);
-
 void drawRect(disp_dev_t *disp_dev, uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color, uint8_t fill);
+
+//text
+uint16_t stringWidth(const font_t *f, const char *str);
+void ellipsize(const font_t *f, char *str, uint8_t max_w);
+void setString(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, align_t align);
+uint8_t setStringClip(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str, uint8_t color, uint8_t max_w);
+uint16_t countLines(const font_t *f, const char *str);
+void drawWrapped(disp_dev_t *disp_dev, uint8_t x, uint8_t y, const font_t *f, const char *str,
+		uint8_t color, uint16_t first_line, uint8_t max_lines);
+
+//screens
 void showMainScreen(disp_dev_t *disp_dev);
+void drawBattStatus(disp_dev_t *disp_dev);
 void dispSplash(disp_dev_t *disp_dev, const char *line1, const char *line2, const char *callsign);
+void showList(disp_dev_t *disp_dev, const char *title, uint8_t num, uint8_t top, uint8_t sel, list_item_fn item);
+void showPopup(disp_dev_t *disp_dev, const char *text);
+void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *title, const char *text);
+void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t mode, const char *dst, const char *text);
+void showMessageView(disp_dev_t *disp_dev, const char *src, const char *dst, const char *age,
+		const char *text, uint16_t scroll, uint8_t idx, uint8_t total);
+void showNotify(disp_dev_t *disp_dev, const char *src, uint8_t unread);
+void showTextView(disp_dev_t *disp_dev, const char *title, const char *text, uint16_t scroll);
 
-void showRcvdTextMessage(disp_dev_t *disp_dev, const char* src, const char* dst, const char* msg);
-void showTextMessageEntry(disp_dev_t *disp_dev, text_entry_t entry_mode);
-void showTextValueEntry(disp_dev_t *disp_dev, text_entry_t entry_mode);
-void redrawTextEntryIcon(disp_dev_t *disp_dev, text_entry_t entry_mode);
-
-void redrawMsgEntry(disp_dev_t *disp_dev, const char *text);
-void redrawValueEntry(disp_dev_t *disp_dev, const char *text);
-
-void showMenu(disp_dev_t *disp_dev, const disp_t *menu, uint8_t start_item, uint8_t h_item);
-
-void redrawText(disp_dev_t *disp_dev, disp_state_t disp_state, char *text);
+const char *textModeLabel(text_entry_t mode);
 
 #endif /* INC_DISPLAY_H_ */

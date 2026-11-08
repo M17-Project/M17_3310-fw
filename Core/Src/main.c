@@ -39,6 +39,9 @@
 #include "debug.h"
 #include "m17_tx.h"
 #include "m17_rx.h"
+#include "ui.h"
+#include "inbox.h"
+#include "tuning.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -84,14 +87,6 @@ UART_HandleTypeDef huart4;
 uint8_t disp_buff[DISP_BUFF_SIZ];
 disp_dev_t disp_dev;
 
-//this handles all kinds of text entry
-abc_t text_entry; //entry mode is TEXT_LOWERCASE by default
-
-//menus state machine
-uint8_t menu_pos, menu_pos_hl; //menu item position, highlighted menu item position
-disp_state_t curr_disp_state = DISP_NONE;
-volatile disp_state_t pending_disp_state = DISP_NONE;
-
 //usb-related (filled by CDC_Receive_FS)
 uint8_t usb_rx[APP_RX_DATA_SIZE + 1];
 uint32_t usb_len;
@@ -112,21 +107,32 @@ const ch_settings_t def_channel =
 
 dev_settings_t def_dev_settings =
 {
-	"N0KIA",
-	{"OpenRTX", "rulez"},
+	.src_callsign = "N0KIA",
+	.welcome_msg = {"OpenRTX", "rulez"},
 
-	200,
-	5,
-	0,
-	750,
-	150,
-	0.0f,
+	.backlight_level = 200,
+	.backlight_timer = 5,
+	.backlight_always = 0,
+	.kbd_timeout = 750,
+	.kbd_delay = 150,
+	.freq_corr = 0.0f,
 
-	TUNING_VFO,
-	def_channel,
-	0,
+	.tuning_mode = TUNING_VFO,
+	.channel = def_channel,
+	.ch_num = 0,
 
-	"@ALL"
+	.refl_name = "@ALL",
+
+	.ext =
+	{
+		.vfo = def_channel,
+		.vfo_step = VFO_STEP_DEFAULT,
+		.splash_time = 2,
+		.contrast = LCD_CONTRAST_DEFAULT,
+		.ringtone = 1,
+		.vibration = 1,
+		.ukrainian = 0
+	}
 };
 
 dev_settings_t dev_settings;
@@ -134,17 +140,11 @@ dev_settings_t dev_settings;
 //codeplug
 extern codeplug_t codeplug;
 
-edit_set_t edit_set = EDIT_NONE;
-
 //radio
 radio_state_t radio_state;
 
 //ADC
 volatile uint16_t batt_adc;
-
-//received message display
-uint8_t rx_scroll;
-uint8_t rx_total_lines;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -170,51 +170,6 @@ static void MX_TIM3_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-//messaging - initialize text packet transmission
-void initTextTX(const char *message)
-{
-	if (radio_state != RF_RX || m17TxActive())
-		return;
-
-	dispClear(&disp_dev, COL_WHITE);
-	setString(&disp_dev, 0, 17, &nokia_big, "Sending...", COL_BLACK, ALIGN_CENTER);
-	dispFlush(&disp_dev);
-
-	if (m17TxStart(message, &dev_settings) != 0)
-	{
-		dispClear(&disp_dev, COL_WHITE);
-		setString(&disp_dev, 0, 17, &nokia_big, "Bad call", COL_BLACK, ALIGN_CENTER);
-		dispFlush(&disp_dev);
-		HAL_Delay(1000);
-
-		curr_disp_state = DISP_MAIN_SCR;
-		showMainScreen(&disp_dev);
-	}
-}
-
-//battery indicator in the upper right corner of the main screen
-static void drawBattStatus(void)
-{
-	//clear the upper right portion of the screen
-	drawRect(&disp_dev, RES_X-1-15, 0, RES_X-1, 8, COL_WHITE, 1);
-
-	//is the battery charging? (read /CHG signal)
-	if (isCharging())
-	{
-		setString(&disp_dev, RES_X-1, 0, &nokia_small, "B+", COL_BLACK, ALIGN_RIGHT);
-	}
-	else
-	{
-		char u_batt_str[8];
-		uint16_t u_batt = getBattVoltage();
-		if (u_batt > 3500)
-			snprintf(u_batt_str, sizeof(u_batt_str), "%u.%u", u_batt/1000, (u_batt%1000)/100);
-		else
-			snprintf(u_batt_str, sizeof(u_batt_str), "Lo");
-		setString(&disp_dev, RES_X-1, 0, &nokia_small, u_batt_str, COL_BLACK, ALIGN_RIGHT);
-	}
-}
-
 //sleep until the next interrupt if there is nothing to do
 //SysTick (1 ms), DMA, USB and timer interrupts wake the core up
 static void idleSleep(void)
@@ -224,7 +179,7 @@ static void idleSleep(void)
 		batch = 120;
 
 	__disable_irq();
-	if (!m17TxRefillPending() && !usb_drdy && pending_disp_state == DISP_NONE &&
+	if (!m17TxRefillPending() && !usb_drdy &&
 		(radio_state != RF_RX || demodSamplesGetNum() < batch))
 	{
 		__DSB();
@@ -305,17 +260,20 @@ int main(void)
 
   //load settings from NVMEM
   loadDeviceSettings(&dev_settings, &def_dev_settings);
+  tuneInit(&dev_settings); //active channel: VFO or memory
+  dispSetContrast(&disp_dev, dev_settings.ext.contrast);
 
-  //display splash screen
-  curr_disp_state = DISP_SPLASH;
-  dispSplash(&disp_dev, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
+  //display splash screen (the slow initialization below runs meanwhile)
+  uint32_t splash_start = HAL_GetTick();
+  if (dev_settings.ext.splash_time)
+	  dispSplash(&disp_dev, dev_settings.welcome_msg[0], dev_settings.welcome_msg[1], dev_settings.src_callsign);
 
   //turn on backlight if required
   setBacklight(dev_settings.backlight_level);
+  setBacklightTimer(dev_settings.backlight_timer);
   if(!dev_settings.backlight_always)
   {
 	  //enable backlight timeout
-	  setBacklightTimer(dev_settings.backlight_timer);
 	  startBacklightTimer();
   }
 
@@ -332,15 +290,28 @@ int main(void)
   //keypad timeout
   setKeysTimeout(dev_settings.kbd_timeout);
 
-  //play beep if required
-  /*if (dev_settings.beep_on_start == 1)
+  //stored messages
+  inboxInit();
+
+  //keep the splash screen up for the configured time, any key skips it
+  if (dev_settings.ext.splash_time)
   {
-	  playBeep(1000, 50);
-  }*/
+	  while ((HAL_GetTick() - splash_start) < (uint32_t)dev_settings.ext.splash_time * 1000U)
+	  {
+		  if (scanKeys(radio_state, dev_settings.kbd_delay) != KEY_NONE)
+			  break;
+		  demodResync(); //nobody processes the RX samples yet
+	  }
+
+	  //don't let the key that skipped the splash act on the main screen
+	  uint32_t t0 = HAL_GetTick();
+	  while (keyHeld() && (HAL_GetTick() - t0) < 1000U)
+		  ;
+  }
+  demodResync();
 
   //menu init
-  curr_disp_state = DISP_MAIN_SCR;
-  showMainScreen(&disp_dev);
+  uiInit(&disp_dev);
   dispFlush(&disp_dev);
 
   //start the watchdog after the (slow) initialization
@@ -357,20 +328,8 @@ int main(void)
 
 	  wdgKick();
 
-	  //get any pending transitions (triggered externally, not through the keypad)
-	  if (pending_disp_state != DISP_NONE)
-	  {
-	      leaveState(curr_disp_state, text_entry.buffer, &dev_settings, EDIT_NONE, &radio_state);
-
-	      curr_disp_state = pending_disp_state;
-	      pending_disp_state = DISP_NONE; //reset
-
-	      enterState(&disp_dev, curr_disp_state, &text_entry, &dev_settings);
-	  }
-
 	  //handle key presses
-	  handleKey(&disp_dev, &curr_disp_state, &text_entry, &radio_state,
-			  &dev_settings, scanKeys(radio_state, dev_settings.kbd_delay), &edit_set);
+	  uiHandleKey(scanKeys(radio_state, dev_settings.kbd_delay));
 
 	  //once per second
 	  if (t_now - t_last >= 1000)
@@ -380,8 +339,7 @@ int main(void)
 		  if (radio_state == RF_RX)
 		  {
 			  //refresh main screen data
-			  if (curr_disp_state == DISP_MAIN_SCR)
-				  drawBattStatus();
+			  uiSecondTick();
 
 			  //protect the battery from deep discharge
 			  if (battCheckEmpty())
@@ -400,31 +358,26 @@ int main(void)
 	  if (m17TxProcess())
 	  {
 		  //done
-		  curr_disp_state = DISP_MAIN_SCR;
-		  showMainScreen(&disp_dev);
-
-		  text_entry.buffer[0] = 0;
-		  text_entry.pos = 0;
-		  // keep the current text entry mode
+		  uiTxDone();
 	  }
 
 	  //received data over USB (deferred while transmitting - Flash writes
 	  //and RF register access would disturb the transmission)
 	  if (usb_drdy && !m17TxActive())
 	  {
-		  parseUSB(&text_entry, usb_rx, usb_len);
+		  parseUSB(usb_rx, usb_len);
 		  usb_drdy = 0;
 	  }
 
 	  //demodulate baseband samples
 	  if (radio_state == RF_RX && m17RxProcess())
 	  {
-		  rx_scroll = 0;
-		  rx_total_lines = wrapLineStarts(&nokia_small, rcvd_msg.text, NULL, 0);
-
-		  pending_disp_state = DISP_TEXT_MSG_RCVD;
+		  inboxAdd(&rcvd_msg);
+		  uiMessageReceived();
 	  }
 
+	  ringtoneTick();
+	  uiTick();
 	  platformTick();
 
 	  //send the frame buffer to the display (if anything has changed)

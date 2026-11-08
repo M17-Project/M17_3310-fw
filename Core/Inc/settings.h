@@ -32,8 +32,23 @@ typedef enum tuning_mode
 	TUNING_MEM
 } tuning_mode_t;
 
+//settings added after layout 1 - see nvmem.c
+//RULE: only ever append fields here, never reorder or remove them
+typedef struct __attribute__((aligned(4)))
+{
+	ch_settings_t vfo;			//VFO state (dev_settings.channel is the active channel)
+	uint32_t vfo_step;			//Hz
+	uint8_t splash_time;		//seconds, 0 = no splash screen
+	uint8_t contrast;			//LCD contrast, 0..127
+	uint8_t ringtone;			//index into ringtones[], 0 = off
+	uint8_t vibration;			//vibrate on a new message
+	uint8_t ukrainian;			//Ukrainian text entry modes enabled
+	uint8_t reserved[3];
+} dev_settings_ext_t;
+
 typedef struct dev_settings
 {
+	//--- layout 1 (firmware <= 1.4.x), do not change ---
 	char src_callsign[12];
 	char welcome_msg[2][24];
 
@@ -45,10 +60,13 @@ typedef struct dev_settings
 	float freq_corr;
 
 	tuning_mode_t tuning_mode;
-	ch_settings_t channel;
+	ch_settings_t channel;		//active channel (VFO copy or memory channel)
 	uint16_t ch_num;
 
 	char refl_name[12];
+
+	//--- layout 2 ---
+	dev_settings_ext_t ext;
 } dev_settings_t;
 
 #endif /* INC_SETTINGS_H_ */

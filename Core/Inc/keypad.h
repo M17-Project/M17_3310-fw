@@ -7,26 +7,17 @@
 #include "text_entry.h"
 #include "keymaps.h"
 
-typedef struct disp_dev_t disp_dev_t;
-
-extern void initTextTX(const char *message);
-extern void loadDeviceSettings(dev_settings_t *dev_settings, const dev_settings_t *def_dev_settings);
-extern void setFreqRF(uint32_t freq, float corr);
-extern uint8_t saveData(const void *data, uint16_t size);
-
-extern dev_settings_t def_dev_settings;
-extern uint8_t menu_pos, menu_pos_hl;
-
-extern codeplug_t codeplug;
-
-//text entry related
-void resetTextEntry(void);
+//key scanning
 kbd_key_t scanKeys(radio_state_t radio_state, uint16_t rep);
-void pushCharBuffer(abc_t *text_entry, const char key_map[][KEYMAP_COLS], kbd_key_t key);
-void pushCharT9(abc_t *text_entry, kbd_key_t key);
-void handleKey(disp_dev_t *disp_dev, disp_state_t *disp_state, abc_t *text_entry,
-		radio_state_t *radio_state, dev_settings_t *dev_settings,
-		kbd_key_t key, edit_set_t *edit_set);
-void setKeysTimeout(uint16_t delay);
+uint8_t keyHeld(void);						//any key down right now (raw)
+void setKeysTimeout(uint16_t delay);		//multi-tap timeout, ms
+
+//text entry
+void textEntryInit(abc_t *te, const char *initial, uint16_t max_len, uint8_t modes, text_entry_t mode);
+uint8_t textEntryKey(abc_t *te, kbd_key_t key);		//keys 1..9, *, 0 - returns 1 if the text changed
+uint8_t textEntryBackspace(abc_t *te);				//returns 0 if there was nothing to delete
+void textEntryNextMode(abc_t *te);					//# key
+void textEntryConfirm(abc_t *te);					//finish the current character / T9 word
+void resetTextEntry(void);
 
 #endif /* INC_KEYPAD_H_ */

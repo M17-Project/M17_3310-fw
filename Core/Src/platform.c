@@ -81,11 +81,14 @@ static uint32_t getTim1Clock(void)
 	return pclk2;
 }
 
-//blocking
-void playBeep(float freq, uint16_t duration)
+//start a tone on the buzzer (non-blocking, runs until buzzerStop())
+void buzzerStart(float freq)
 {
 	if (freq < 10.0f)
+	{
+		buzzerStop();
 		return;
+	}
 
 	const float tim_clk = (float)getTim1Clock();
 
@@ -112,8 +115,22 @@ void playBeep(float freq, uint16_t duration)
 	TIM1->EGR = TIM_EGR_UG;
 
 	HAL_TIMEx_PWMN_Start(&htim1, TIM_CHANNEL_1);
-	HAL_Delay(duration);
+}
+
+void buzzerStop(void)
+{
 	HAL_TIMEx_PWMN_Stop(&htim1, TIM_CHANNEL_1);
+}
+
+//blocking
+void playBeep(float freq, uint16_t duration)
+{
+	if (freq < 10.0f)
+		return;
+
+	buzzerStart(freq);
+	HAL_Delay(duration);
+	buzzerStop();
 }
 
 //independent watchdog, clocked from LSI (17..47 kHz, 32 kHz typical)

@@ -100,14 +100,15 @@ static void genFrame(uint8_t idx, uint16_t *out)
 	fltSymbolsPoly(out, symbols, rrc_taps_10_poly, 0);
 }
 
+//message: UTF-8 text, dst: destination callsign (NULL: the channel's)
 //returns 0 on success, -1 if busy, -2 on invalid callsigns
-int8_t m17TxStart(const char *message, const dev_settings_t *ds)
+int8_t m17TxStart(const char *message, const char *dst, const dev_settings_t *ds)
 {
 	if (tx_active || radio_state != RF_RX)
 		return -1;
 
 	//LSF - rebuilt every time, so that new settings are used immediately
-	if (set_LSF(&lsf_tx, ds->src_callsign, ds->channel.dst,
+	if (set_LSF(&lsf_tx, ds->src_callsign, (dst != NULL) ? dst : ds->channel.dst,
 			M17_TYPE_PACKET | M17_TYPE_CAN(ds->channel.can), NULL) != 0)
 		return -2;
 

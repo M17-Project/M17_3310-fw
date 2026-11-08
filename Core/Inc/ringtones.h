@@ -6,19 +6,29 @@
 
 typedef struct note_t
 {
-	float frequency;
-	uint16_t duration;
-	uint16_t gap;
+	float frequency;	//Hz, 0 = rest
+	uint16_t duration;	//ms
+	uint16_t gap;		//ms of silence after the note
 } note_t;
 
 typedef struct melody_t
 {
+	const char *name;
 	uint16_t length;
-	note_t *notes;
+	const note_t *notes;
 } melody_t;
 
-extern const melody_t ringtones[2];
+//ringtones[0] is "Off" (no notes)
+extern const melody_t ringtones[];
+extern const uint8_t ringtones_num;
 
-void playMelody(melody_t melody);
+//non-blocking player, ringtoneTick() has to be called from the main loop
+void ringtonePlay(uint8_t idx);
+void ringtoneStop(void);
+uint8_t ringtoneActive(void);
+void ringtoneTick(void);
+
+//blocking
+void playMelody(const melody_t *melody);
 
 #endif /* INC_RINGTONES_H_ */

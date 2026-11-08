@@ -34,6 +34,8 @@ static float pld_symbs[SYM_PER_PLD];		//payload symbols
 
 //LSF data of the transmission being received
 static char lsf_src[10], lsf_dst[10];
+static uint16_t lsf_type;
+static uint8_t lsf_meta[14];
 
 //packet reassembly
 static char pkt_buf[sizeof(rcvd_msg.text)];
@@ -132,6 +134,8 @@ static void decodeLSF(void)
 
 	decode_callsign_bytes(lsf_dst, lsf.dst);
 	decode_callsign_bytes(lsf_src, lsf.src);
+	lsf_type = type;
+	memcpy(lsf_meta, lsf.meta, sizeof(lsf_meta));
 
 	//a new transmission starts with an LSF
 	pktReset();
@@ -223,6 +227,10 @@ static uint8_t decodePacket(void)
 			memcpy(rcvd_msg.dst, lsf_dst, sizeof(rcvd_msg.dst));
 			rcvd_msg.src[sizeof(rcvd_msg.src)-1] = 0;
 			rcvd_msg.dst[sizeof(rcvd_msg.dst)-1] = 0;
+
+			//so do TYPE and META (META is interpreted as in stream mode)
+			rcvd_msg.type = lsf_type;
+			memcpy(rcvd_msg.meta, lsf_meta, sizeof(rcvd_msg.meta));
 
 			ok = 1;
 		}

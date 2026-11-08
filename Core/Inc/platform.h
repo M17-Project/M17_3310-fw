@@ -25,6 +25,8 @@ void setBacklightTimer(uint8_t t);
 void startBacklightTimer(void);
 void actVibr(uint8_t period);
 void platformTick(void);
+void buzzerStart(float freq);
+void buzzerStop(void);
 void playBeep(float freq, uint16_t duration);
 
 void wdgInit(void);

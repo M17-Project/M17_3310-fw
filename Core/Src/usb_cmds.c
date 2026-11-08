@@ -1,16 +1,19 @@
 #include "usb_cmds.h"
-
-extern volatile disp_state_t pending_disp_state;
+#include "ui.h"
+#include "tuning.h"
+#include "inbox.h"
+#include "msginfo.h"
+#include "menus.h"
 
 //USB control
-void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
+void parseUSB(uint8_t *str, uint32_t len)
 {
 	//backlight timeout
 	//"blt=VALUE"
 	if(strncmp((char*)str, "blt=", 4)==0)
 	{
 		int t = atoi((char*)str+4);
-		dev_settings.backlight_timer = (t < 0) ? 0 : (t > 32) ? 32 : t;
+		dev_settings.backlight_timer = (t < 1) ? 1 : (t > 32) ? 32 : t;
 		saveData(&dev_settings, sizeof(dev_settings_t));
 		setBacklightTimer(dev_settings.backlight_timer);
 	}
@@ -81,6 +84,10 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 	else if(strncmp((char*)str, "load", 4)==0)
 	{
 		loadDeviceSettings(&dev_settings, &def_dev_settings);
+		tuneInit(&dev_settings);
+		tuneApply();
+		applyDeviceSettings();
+		uiRefresh();
 	}
 
 	//erase Flash memory sector
@@ -96,6 +103,7 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 	{
 		copyCallsign(dev_settings.src_callsign, sizeof(dev_settings.src_callsign), (char*)str+9);
 		saveData(&dev_settings, sizeof(dev_settings_t));
+		uiRefresh();
 	}
 
 	//set frequency correction
@@ -111,18 +119,43 @@ void parseUSB(abc_t *text_entry, uint8_t *str, uint32_t len)
 		}
 	}
 
-	//send text message, 200 bytes max for now
+	//send text message (UTF-8), 200 bytes max for now
 	//"msg=STRING"
 	else if(len<(4+200) && strncmp((char*)str, "msg=", 4)==0)
 	{
-		snprintf(text_entry->buffer, sizeof(text_entry->buffer), "%s", (char*)str+4);
-		initTextTX(text_entry->buffer);
+		static char msg[200];
+		snprintf(msg, sizeof(msg), "%s", (char*)str+4);
+		uiSendUtf8(msg, NULL, 0);
 	}
 
-	//test: display last text message
+	//test: display the newest message
 	else if(strncmp((char*)str, "disp_msg", 8)==0)
 	{
-		pending_disp_state = DISP_TEXT_MSG_RCVD;
+		uiShowNewestMessage();
+	}
+
+	//RF module firmware version and model (queried again)
+	//"rfver?"
+	else if(strncmp((char*)str, "rfver?", 6)==0)
+	{
+		readInfoRF();
+	}
+
+	//list the inbox with message details
+	//"inbox?"
+	else if(strncmp((char*)str, "inbox?", 6)==0)
+	{
+		static char info[400];
+
+		dbg_print("[Inbox] %u message(s), %u unread%s\n", inboxCount(), inboxUnread(),
+				inboxPersistent() ? "" : " (not stored)");
+		for(uint8_t i=0; i<inboxCount(); i++)
+		{
+			const inbox_msg_t *m = inboxGet(i);
+			msgInfoText(m, info, sizeof(info));
+			dbg_print("--- #%u%s, TYPE=%04X\n%s\nText: %s\n", i+1, m->unread ? " (new)" : "",
+					m->type, info, m->text);
+		}
 	}
 
 	//get LSF META field
